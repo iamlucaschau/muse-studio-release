@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Muse Studio (AI Media & Video)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        museBg: '#0B0D14',
+                        musePanel: '#111420',
+                        museCard: '#161A29',
+                        museInput: '#0E111B',
+                        museBorder: '#23293E',
+                        museAccent: '#6366F1',
+                        museAccentHover: '#4F46E5'
+                    }
+                }
+            }
+        };
+    </script>
+</head>
+<body class="bg-museBg text-gray-100 flex flex-col h-screen overflow-hidden">
+
+    <!-- ==================== HEADER NAVIGATION BAR ==================== -->
+    <header class="h-14 bg-musePanel border-b border-museBorder px-4 flex items-center justify-between shrink-0 z-20">
+        <!-- Logo + Tên ứng dụng -->
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/25">
+                <i class="fa-solid fa-wand-magic-sparkles text-white text-base"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="font-bold text-base tracking-tight text-white">Muse Studio</span>
+                    <span class="text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        AI Media & Video
+                    </span>
+                </div>
+                <p class="text-[11px] text-gray-400 leading-none mt-0.5">Meta Muse.ai Multi-Tab Persistent Automation</p>
+            </div>
+        </div>
+
+        <!-- 5 Nút chuyển Tab ở giữa -->
+        <nav class="flex items-center gap-1.5 bg-museInput p-1 rounded-xl border border-museBorder">
+            <button onclick="switchTab('studio')" id="tab-btn-studio" class="nav-tab-btn active px-4 py-1.5 rounded-lg text-xs font-semibold border border-transparent text-gray-300 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-clapperboard text-indigo-400"></i>
+                <span>Studio</span>
+            </button>
+            <button onclick="switchTab('gallery')" id="tab-btn-gallery" class="nav-tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold border border-transparent text-gray-300 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-photo-film text-violet-400"></i>
+                <span>Thư viện</span>
+            </button>
+            <button onclick="switchTab('accounts')" id="tab-btn-accounts" class="nav-tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold border border-transparent text-gray-300 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-users-gear text-emerald-400"></i>
+                <span>Tài khoản</span>
+            </button>
+            <button onclick="switchTab('proxies')" id="tab-btn-proxies" class="nav-tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold border border-transparent text-gray-300 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-network-wired text-amber-400"></i>
+                <span>Proxy</span>
+            </button>
+            <button onclick="switchTab('settings')" id="tab-btn-settings" class="nav-tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold border border-transparent text-gray-300 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-sliders text-sky-400"></i>
+                <span>Cài đặt</span>
+            </button>
+        </nav>
+
+        <!-- Góc phải: Badge hiển thị trạng thái Đang chạy: X và Hoàn thành: Y -->
+        <div class="flex items-center gap-2.5">
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs font-medium text-indigo-300">
+                <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                <span>Đang chạy: <strong id="badge-global-running" class="text-white font-bold">0</strong></span>
+            </div>
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs font-medium text-emerald-300">
+                <i class="fa-solid fa-circle-check text-emerald-400"></i>
+                <span>Hoàn thành: <strong id="badge-global-completed" class="text-white font-bold">0</strong></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ==================== MAIN CONTENT AREA ==================== -->
+    <main class="flex-1 overflow-hidden relative">
+
+        <!-- ==================== TAB 1: STUDIO (CHIA 2 CỘT) ==================== -->
+        <section id="tab-view-studio" class="h-full w-full flex gap-3 p-3 overflow-hidden">
+
+            <!-- CỘT TRÁI (Danh sách & Tiến độ) -->
+            <div class="flex-1 flex flex-col bg-musePanel border border-museBorder rounded-xl overflow-hidden min-w-0">
+
+                <!-- 1. Thanh chọn Dự án + Bộ lọc + Ô tìm kiếm -->
+                <div class="p-3 border-b border-museBorder flex flex-wrap items-center justify-between gap-2 bg-museCard/60">
+                    <!-- Dự án -->
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-semibold text-gray-400 mr-1"><i class="fa-solid fa-folder-tree mr-1 text-indigo-400"></i>Dự án:</span>
+                        <select id="studio-project-select" onchange="onProjectChange()" class="bg-museInput border border-museBorder rounded-lg px-3 py-1.5 text-xs font-semibold text-white focus:outline-none focus:border-museAccent min-w-[150px]">
+                        </select>
+                        <button onclick="createNewProjectPrompt()" title="Tạo dự án mới" class="px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                        <button onclick="renameCurrentProjectPrompt()" title="Sửa tên dự án" class="px-2.5 py-1.5 rounded-lg bg-gray-700/40 hover:bg-gray-700/70 text-gray-300 border border-museBorder text-xs transition">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button onclick="deleteCurrentProjectPrompt()" title="Xóa dự án" class="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs transition">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+
+                    <!-- Bộ lọc trạng thái + Ô tìm kiếm -->
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <div class="flex items-center bg-museInput p-0.5 rounded-lg border border-museBorder text-[11px] font-medium">
+                            <button onclick="setStudioFilter('all')" id="filter-btn-all" class="px-2.5 py-1 rounded-md bg-museAccent text-white transition">
+                                Tất cả (<span id="count-filter-all">0</span>)
+                            </button>
+                            <button onclick="setStudioFilter('pending')" id="filter-btn-pending" class="px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">
+                                Chờ (<span id="count-filter-pending">0</span>)
+                            </button>
+                            <button onclick="setStudioFilter('running')" id="filter-btn-running" class="px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">
+                                Đang chạy (<span id="count-filter-running">0</span>)
+                            </button>
+                            <button onclick="setStudioFilter('completed')" id="filter-btn-completed" class="px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">
+                                Xong (<span id="count-filter-completed">0</span>)
+                            </button>
+                            <button onclick="setStudioFilter('failed')" id="filter-btn-failed" class="px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">
+                                Lỗi (<span id="count-filter-failed">0</span>)
+                            </button>
+                        </div>
+
+                        <div class="relative">
+                            <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                            <input
+                                id="studio-search-input"
+                                type="text"
+                                oninput="onStudioSearchInput()"
+                                placeholder="Tìm tên hoặc prompt..."
+                                class="bg-museInput border border-museBorder rounded-lg pl-7 pr-3 py-1 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-museAccent w-44"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Thanh tác vụ hàng loạt -->
+                <div class="px-3 py-2 border-b border-museBorder flex flex-wrap items-center justify-between gap-2 bg-musePanel">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <button onclick="toggleSelectAllTasks()" class="px-2.5 py-1 rounded-lg bg-museCard hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-regular fa-square-check text-indigo-400"></i>
+                            <span>Chọn tất cả</span>
+                        </button>
+                        <button onclick="openQuickSelectModal()" class="px-2.5 py-1 rounded-lg bg-museCard hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-wand-sparkles text-violet-400"></i>
+                            <span>Chọn nhanh...</span>
+                        </button>
+                        <button onclick="reindexProjectTasks()" class="px-2.5 py-1 rounded-lg bg-museCard hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-arrow-down-1-9 text-sky-400"></i>
+                            <span>Đánh lại STT</span>
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <span id="selected-tasks-counter" class="text-[11px] text-gray-400 mr-1">Đã chọn: 0</span>
+                        <button onclick="startSelectedOrAllTasks()" class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition">
+                            <i class="fa-solid fa-play"></i>
+                            <span>Chạy</span>
+                        </button>
+                        <button onclick="retryFailedTasks()" class="px-3 py-1 rounded-lg bg-amber-600/90 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-rotate-right"></i>
+                            <span>Chạy từ lỗi</span>
+                        </button>
+                        <button onclick="stopSelectedOrAllTasks()" class="px-3 py-1 rounded-lg bg-orange-600/80 hover:bg-orange-600 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-stop"></i>
+                            <span>Dừng</span>
+                        </button>
+                        <button onclick="deleteSelectedTasks()" class="px-3 py-1 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-trash-can"></i>
+                            <span>Xóa</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. Bảng dữ liệu Tasks -->
+                <div class="flex-1 overflow-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-museCard border-b border-museBorder text-[11px] font-semibold text-gray-400 uppercase z-10">
+                            <tr>
+                                <th class="py-2.5 px-3 w-9 text-center">
+                                    <input type="checkbox" id="header-checkbox-all" onchange="toggleSelectAllTasks(this.checked)" class="rounded border-gray-600 bg-museInput text-indigo-600 focus:ring-0 cursor-pointer" />
+                                </th>
+                                <th class="py-2.5 px-2 w-12 text-center">STT</th>
+                                <th class="py-2.5 px-3">TÊN & PROMPT</th>
+                                <th class="py-2.5 px-2 w-24 text-center">LOẠI</th>
+                                <th class="py-2.5 px-2 w-32">TÀI KHOẢN</th>
+                                <th class="py-2.5 px-3 w-52">TRẠNG THÁI</th>
+                                <th class="py-2.5 px-3 w-32 text-right">THAO TÁC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studio-tasks-tbody" class="divide-y divide-museBorder/60 text-xs">
+                            <!-- Dữ liệu render động từ app.js -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- CỘT PHẢI (Khung tạo tác vụ mới) -->
+            <div class="w-[410px] shrink-0 flex flex-col bg-musePanel border border-museBorder rounded-xl overflow-hidden">
+                <div class="p-3 border-b border-museBorder bg-museCard/60 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-bolt text-indigo-400"></i>
+                        <h2 class="text-xs font-bold uppercase tracking-wider text-white">Khung tạo tác vụ mới</h2>
+                    </div>
+                    <span id="prompt-line-counter-badge" class="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        0 Prompt
+                    </span>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-3.5 space-y-3.5">
+                    <!-- 3 nút chuyển loại: Video | Ảnh | Ảnh -> Video -->
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-400 uppercase mb-1.5">Loại tác vụ</label>
+                        <div class="grid grid-cols-3 gap-1.5 bg-museInput p-1 rounded-xl border border-museBorder">
+                            <button onclick="setTaskType('video')" id="type-btn-video" class="py-2 rounded-lg text-xs font-semibold bg-museAccent text-white shadow transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-video"></i>
+                                <span>Video</span>
+                            </button>
+                            <button onclick="setTaskType('image')" id="type-btn-image" class="py-2 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-image"></i>
+                                <span>Ảnh</span>
+                            </button>
+                            <button onclick="setTaskType('img2vid')" id="type-btn-img2vid" class="py-2 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <span>Ảnh → Video</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Textarea nhập danh sách Prompt (tự đếm số dòng = số prompt) -->
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="text-[11px] font-semibold text-gray-400 uppercase">Danh sách Prompt (Mỗi dòng 1 Prompt)</label>
+                            <button onclick="clearPromptTextarea()" class="text-[11px] text-gray-400 hover:text-rose-400 transition">Xóa trắng</button>
+                        </div>
+                        <textarea
+                            id="studio-prompt-textarea"
+                            rows="7"
+                            oninput="onPromptTextareaInput()"
+                            placeholder="Nhập danh sách prompt tại đây (mỗi dòng tương ứng 1 tác vụ)...&#10;VD:&#10;Cinematic drone shot over cyberpunk Tokyo at night in the rain&#10;Cho nhân vật anh_so_1 đi bộ dưới mưa cùng anh_so_2"
+                            class="w-full bg-museInput border border-museBorder rounded-xl p-3 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-museAccent resize-none leading-relaxed"
+                        ></textarea>
+                    </div>
+
+                    <!-- Khối chọn Ảnh tham chiếu (tùy chọn): + Ảnh, + Thư mục và 3 tab chế độ Ghép cặp | Dùng chung | Theo tên prompt -->
+                    <div class="bg-museCard/60 border border-museBorder rounded-xl p-3 space-y-2.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-semibold text-gray-300 uppercase flex items-center gap-1.5">
+                                <i class="fa-solid fa-images text-indigo-400"></i>
+                                Ảnh tham chiếu <span class="text-gray-500 font-normal">(Tùy chọn)</span>
+                            </span>
+                            <div class="flex items-center gap-1">
+                                <input type="file" id="browser-ref-images-input" multiple accept=".png,.jpg,.jpeg,.webp,image/*" class="hidden" onchange="onBrowserRefImagesSelected(event, false)" />
+                                <input type="file" id="browser-ref-folder-input" webkitdirectory directory multiple class="hidden" onchange="onBrowserRefImagesSelected(event, true)" />
+                                <button onclick="selectRefImagesDialog()" class="px-2 py-1 rounded-md bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-300 border border-indigo-500/30 text-[11px] font-semibold transition">
+                                    + Ảnh
+                                </button>
+                                <button onclick="selectRefFolderDialog()" class="px-2 py-1 rounded-md bg-violet-500/20 hover:bg-violet-500/35 text-violet-300 border border-violet-500/30 text-[11px] font-semibold transition">
+                                    + Thư mục
+                                </button>
+                                <button onclick="clearRefImages()" title="Xóa danh sách ảnh đã nạp" class="px-2 py-1 rounded-md bg-gray-700/40 hover:bg-rose-500/30 text-gray-400 hover:text-rose-300 text-[11px] transition">
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 3 tab chế độ: Ghép cặp | Dùng chung | Theo tên prompt -->
+                        <div class="grid grid-cols-3 gap-1 bg-museInput p-1 rounded-lg border border-museBorder text-[11px] font-semibold">
+                            <button onclick="setRefMode('pair')" id="refmode-btn-pair" class="py-1.5 rounded-md bg-museAccent text-white transition">
+                                Ghép cặp
+                            </button>
+                            <button onclick="setRefMode('shared')" id="refmode-btn-shared" class="py-1.5 rounded-md text-gray-400 hover:text-white transition">
+                                Dùng chung
+                            </button>
+                            <button onclick="setRefMode('by_name')" id="refmode-btn-by_name" class="py-1.5 rounded-md text-gray-400 hover:text-white transition">
+                                Theo tên prompt
+                            </button>
+                        </div>
+
+                        <p id="ref-mode-helper-text" class="text-[11px] text-gray-400 leading-snug">
+                            Prompt dòng thứ <i>i</i> tự động đính kèm file ảnh thứ <i>i</i> trong danh sách.
+                        </p>
+
+                        <!-- Danh sách file ảnh đã nạp & nút Xem trước ghép ảnh -->
+                        <div class="flex items-center justify-between text-[11px] pt-1 border-t border-museBorder/60">
+                            <span id="ref-images-count-label" class="text-gray-400">Chưa chọn ảnh tham chiếu</span>
+                            <button onclick="openMatcherPreviewModal()" class="text-indigo-400 hover:text-indigo-300 font-semibold underline">
+                                Kiểm tra khớp ảnh
+                            </button>
+                        </div>
+                        <div id="ref-images-chips" class="flex flex-wrap gap-1 max-h-24 overflow-y-auto empty:hidden"></div>
+                    </div>
+
+                    <!-- Khối chọn Tỉ lệ: 16:9, 9:16, 1:1, 4:3, 3:4 -->
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-400 uppercase mb-1.5">Tỉ lệ khung hình (Aspect Ratio)</label>
+                        <div class="grid grid-cols-5 gap-1.5">
+                            <button onclick="setAspectRatio('16:9')" id="ratio-btn-16:9" class="py-2 rounded-lg text-xs font-semibold bg-museAccent text-white border border-indigo-400/50 transition">16:9</button>
+                            <button onclick="setAspectRatio('9:16')" id="ratio-btn-9:16" class="py-2 rounded-lg text-xs font-semibold bg-museInput text-gray-400 hover:text-white border border-museBorder transition">9:16</button>
+                            <button onclick="setAspectRatio('1:1')" id="ratio-btn-1:1" class="py-2 rounded-lg text-xs font-semibold bg-museInput text-gray-400 hover:text-white border border-museBorder transition">1:1</button>
+                            <button onclick="setAspectRatio('4:3')" id="ratio-btn-4:3" class="py-2 rounded-lg text-xs font-semibold bg-museInput text-gray-400 hover:text-white border border-museBorder transition">4:3</button>
+                            <button onclick="setAspectRatio('3:4')" id="ratio-btn-3:4" class="py-2 rounded-lg text-xs font-semibold bg-museInput text-gray-400 hover:text-white border border-museBorder transition">3:4</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2 nút dưới cùng: Tạo & chạy (N) và Chỉ thêm -->
+                <div class="p-3.5 border-t border-museBorder bg-museCard/80 grid grid-cols-3 gap-2">
+                    <button onclick="submitCreateTasks(true)" class="col-span-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-rocket"></i>
+                        <span id="btn-create-and-run-label">Tạo & chạy (0)</span>
+                    </button>
+                    <button onclick="submitCreateTasks(false)" class="col-span-1 py-2.5 px-3 rounded-xl bg-museInput hover:bg-gray-800 text-gray-200 border border-museBorder font-semibold text-xs flex items-center justify-center gap-1.5 transition">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>Chỉ thêm</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 2: THƯ VIỆN (MEDIA GALLERY) ==================== -->
+        <section id="tab-view-gallery" class="hidden h-full w-full flex flex-col p-3 overflow-hidden">
+            <div class="bg-musePanel border border-museBorder rounded-xl flex-1 flex flex-col overflow-hidden">
+                <!-- Thanh công cụ lọc Thư viện -->
+                <div class="p-3.5 border-b border-museBorder bg-museCard/60 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-photo-film text-violet-400"></i>
+                            <span>Thư viện Media Đã Tạo</span>
+                        </h2>
+                        <!-- Bộ lọc theo loại (Tất cả, Video, Ảnh) -->
+                        <div class="flex items-center bg-museInput p-0.5 rounded-lg border border-museBorder text-xs font-semibold">
+                            <button onclick="setGalleryTypeFilter('all')" id="gal-type-all" class="px-3 py-1 rounded-md bg-museAccent text-white transition">Tất cả</button>
+                            <button onclick="setGalleryTypeFilter('video')" id="gal-type-video" class="px-3 py-1 rounded-md text-gray-400 hover:text-white transition">Video</button>
+                            <button onclick="setGalleryTypeFilter('image')" id="gal-type-image" class="px-3 py-1 rounded-md text-gray-400 hover:text-white transition">Ảnh</button>
+                        </div>
+
+                        <!-- Bộ lọc theo Dự án -->
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-xs text-gray-400">Dự án:</span>
+                            <select id="gallery-project-filter" onchange="loadGallery()" class="bg-museInput border border-museBorder rounded-lg px-3 py-1 text-xs font-semibold text-white focus:outline-none focus:border-museAccent">
+                                <option value="0">Tất cả dự án</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <span id="gallery-total-count" class="text-xs text-gray-400">0 media</span>
+                        <button onclick="openOutputRootFolder()" class="px-3 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-folder-open text-amber-400"></i>
+                            <span>Mở thư mục Output</span>
+                        </button>
+                        <button onclick="loadGallery()" class="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/35 border border-indigo-500/30 text-xs text-indigo-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-rotate"></i>
+                            <span>Làm mới</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grid hiển thị các thẻ media -->
+                <div id="gallery-grid-container" class="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 content-start">
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 3: TÀI KHOẢN ==================== -->
+        <section id="tab-view-accounts" class="hidden h-full w-full flex flex-col p-3 overflow-hidden">
+            <div class="bg-musePanel border border-museBorder rounded-xl flex-1 flex flex-col overflow-hidden">
+                <!-- Thanh cấu hình luồng & thao tác tài khoản -->
+                <div class="p-3.5 border-b border-museBorder bg-museCard/60 flex flex-wrap items-center justify-between gap-3">
+                    <!-- Cấu hình Đa luồng 2 tầng -->
+                    <div class="flex flex-wrap items-center gap-3">
+                        <div class="flex items-center gap-1.5 bg-museInput px-3 py-1.5 rounded-lg border border-museBorder">
+                            <span class="text-xs text-gray-400">TK chạy đồng thời:</span>
+                            <input id="acc-max-concurrent" type="number" min="1" max="100" value="20" onchange="saveAccountThreadConfig()" class="w-14 bg-transparent text-xs font-bold text-indigo-400 text-center focus:outline-none" />
+                        </div>
+                        <div class="flex items-center gap-1.5 bg-museInput px-3 py-1.5 rounded-lg border border-museBorder">
+                            <span class="text-xs text-gray-400">Tổng số luồng:</span>
+                            <input id="acc-global-max-threads" type="number" min="1" max="200" value="25" onchange="saveAccountThreadConfig()" class="w-14 bg-transparent text-xs font-bold text-emerald-400 text-center focus:outline-none" />
+                        </div>
+                        <div class="flex items-center gap-1.5 bg-museInput px-3 py-1.5 rounded-lg border border-museBorder">
+                            <span class="text-xs text-gray-400">Chế độ:</span>
+                            <select id="acc-schedule-mode" onchange="saveAccountThreadConfig()" class="bg-museInput text-xs font-semibold text-white focus:outline-none">
+                                <option value="round_robin">Luân phiên</option>
+                                <option value="sequential">Tuần tự theo tải</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Các nút hành động hàng loạt -->
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="batchCheckQuota()" class="px-3 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-gauge-high text-sky-400"></i>
+                            <span>Kiểm tra hạn mức</span>
+                        </button>
+                        <button onclick="batchCheckCookies()" class="px-3 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-cookie-bite text-amber-400"></i>
+                            <span>Kiểm tra cookie</span>
+                        </button>
+                        <button onclick="batchCheckCookies()" class="px-3 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-arrows-rotate text-emerald-400"></i>
+                            <span>Làm mới cookie</span>
+                        </button>
+                        <button onclick="openAddAccountModal()" class="px-3.5 py-1.5 rounded-lg bg-museAccent hover:bg-museAccentHover text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-indigo-500/20 transition">
+                            <i class="fa-solid fa-user-plus"></i>
+                            <span>+ Thêm tài khoản</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Bảng tài khoản -->
+                <div class="flex-1 overflow-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-museCard border-b border-museBorder text-[11px] font-semibold text-gray-400 uppercase z-10">
+                            <tr>
+                                <th class="py-3 px-3 w-12 text-center">BẬT</th>
+                                <th class="py-3 px-3">TÊN / EMAIL TÀI KHOẢN</th>
+                                <th class="py-3 px-3">PROXY GÁN</th>
+                                <th class="py-3 px-2 text-center w-28">LUỒNG ẢNH</th>
+                                <th class="py-3 px-2 text-center w-28">LUỒNG VIDEO</th>
+                                <th class="py-3 px-3 text-center">HẠN MỨC</th>
+                                <th class="py-3 px-3 text-center">TRẠNG THÁI COOKIE</th>
+                                <th class="py-3 px-3 text-center">TIẾN ĐỘ (CHẠY/XONG/LỖI)</th>
+                                <th class="py-3 px-3 text-right">THAO TÁC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="accounts-tbody" class="divide-y divide-museBorder/60 text-xs">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 4: PROXY ==================== -->
+        <section id="tab-view-proxies" class="hidden h-full w-full flex gap-3 p-3 overflow-hidden">
+            <!-- Cột trái: Danh sách Proxy -->
+            <div class="flex-1 bg-musePanel border border-museBorder rounded-xl flex flex-col overflow-hidden">
+                <div class="p-3.5 border-b border-museBorder bg-museCard/60 flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-network-wired text-amber-400"></i>
+                        <h2 class="text-sm font-bold text-white">Quản lý Danh sách Proxy</h2>
+                        <span id="proxy-total-badge" class="text-xs px-2 py-0.5 rounded-md bg-museInput border border-museBorder text-gray-300">0 Proxy</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="checkAllProxies()" id="btn-check-proxies" class="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-bolt"></i>
+                            <span>Kiểm tra kết nối</span>
+                        </button>
+                        <button onclick="autoAssignProxies()" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-link"></i>
+                            <span>Tự động gán vào tài khoản</span>
+                        </button>
+                        <button onclick="clearDeadProxies()" class="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-broom"></i>
+                            <span>Xóa Proxy Dead</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-museCard border-b border-museBorder text-[11px] font-semibold text-gray-400 uppercase z-10">
+                            <tr>
+                                <th class="py-3 px-3 w-14 text-center">ID</th>
+                                <th class="py-3 px-3">CHUỖI PROXY</th>
+                                <th class="py-3 px-3 w-24 text-center">GIAO THỨC</th>
+                                <th class="py-3 px-3 w-32 text-center">TRẠNG THÁI</th>
+                                <th class="py-3 px-3 w-28 text-center">ĐỘ TRỄ</th>
+                                <th class="py-3 px-3">TÀI KHOẢN GÁN</th>
+                                <th class="py-3 px-3 w-28 text-right">THAO TÁC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="proxies-tbody" class="divide-y divide-museBorder/60 text-xs">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Cột phải: Thêm Proxy hàng loạt -->
+            <div class="w-96 bg-musePanel border border-museBorder rounded-xl flex flex-col overflow-hidden shrink-0">
+                <div class="p-3.5 border-b border-museBorder bg-museCard/60">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                        <i class="fa-solid fa-plus-circle text-indigo-400"></i>
+                        <span>Nạp Proxy Hàng Loạt</span>
+                    </h3>
+                </div>
+                <div class="p-4 flex-1 flex flex-col space-y-3">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-gray-400 uppercase mb-1">Giao thức mặc định</label>
+                        <select id="proxy-default-protocol" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-museAccent">
+                            <option value="http">HTTP / HTTPS</option>
+                            <option value="socks5">SOCKS5</option>
+                        </select>
+                    </div>
+                    <div class="flex-1 flex flex-col">
+                        <label class="block text-[11px] font-semibold text-gray-400 uppercase mb-1">
+                            Danh sách Proxy (Mỗi dòng 1 Proxy)
+                        </label>
+                        <textarea
+                            id="proxy-bulk-textarea"
+                            placeholder="Hỗ trợ các định dạng:&#10;host:port&#10;host:port:username:password&#10;username:password@host:port&#10;socks5://user:pass@host:port"
+                            class="flex-1 w-full bg-museInput border border-museBorder rounded-xl p-3 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-museAccent resize-none font-mono"
+                        ></textarea>
+                    </div>
+                    <button onclick="submitBulkProxies()" class="w-full py-2.5 rounded-xl bg-museAccent hover:bg-museAccentHover text-white font-bold text-xs shadow-lg shadow-indigo-500/20 transition">
+                        <i class="fa-solid fa-upload mr-1.5"></i> Thêm vào danh sách Proxy
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 5: CÀI ĐẶT ==================== -->
+        <section id="tab-view-settings" class="hidden h-full w-full overflow-y-auto p-4">
+            <div class="max-w-5xl mx-auto space-y-4 pb-8">
+                <!-- Khối 1: Cấu hình Đường dẫn, Timeout & Hành vi Trình duyệt -->
+                <div class="bg-musePanel border border-museBorder rounded-xl p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-museBorder pb-3">
+                        <div>
+                            <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                                <i class="fa-solid fa-gears text-indigo-400"></i>
+                                <span>Cấu hình Hệ thống & Playwright Engine</span>
+                            </h2>
+                            <p class="text-xs text-gray-400 mt-0.5">Thiết lập thư mục lưu trữ, thời gian chờ tối đa và cơ chế thực thi trình duyệt ẩn ngoài màn hình.</p>
+                        </div>
+                        <button onclick="saveAllSettings()" class="px-4 py-2 rounded-xl bg-museAccent hover:bg-museAccentHover text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-500/25 transition">
+                            <i class="fa-solid fa-floppy-disk"></i>
+                            <span>Lưu toàn bộ cài đặt</span>
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Đường dẫn lưu file -->
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Đường dẫn lưu file Output (/output/IMG/ &amp; /output/VIDEO/)</label>
+                            <div class="flex gap-2">
+                                <input id="set-output-dir" type="text" class="flex-1 bg-museInput border border-museBorder rounded-lg px-3 py-2 text-xs text-gray-100 font-mono focus:outline-none focus:border-museAccent" />
+                                <button onclick="browseOutputFolder()" class="px-3.5 py-2 rounded-lg bg-museCard hover:bg-gray-800 border border-museBorder text-xs font-semibold text-indigo-300 transition">
+                                    <i class="fa-solid fa-folder-open mr-1"></i> Chọn thư mục
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Timeout Ảnh (300s) & Video (600s) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Timeout Tạo Ảnh (Giây - Mặc định 300s)</label>
+                            <input id="set-image-timeout" type="number" min="60" max="1800" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-museAccent" />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-300 mb-1.5">Timeout Tạo Video 10s (Giây - Mặc định 600s)</label>
+                            <input id="set-video-timeout" type="number" min="120" max="3600" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-museAccent" />
+                        </div>
+
+                        <!-- Toggle Auto-Approve & Off-screen Mode -->
+                        <div class="bg-museCard/70 border border-museBorder rounded-xl p-3.5 flex items-center justify-between">
+                            <div>
+                                <div class="text-xs font-bold text-white">Tự động bấm Approve (Auto-Approve Watcher)</div>
+                                <div class="text-[11px] text-gray-400 mt-0.5">Kiểm tra DOM mỗi 2s, tự động click Approve / Allow / Cho phép / Continue</div>
+                            </div>
+                            <input id="set-auto-approve" type="checkbox" class="w-5 h-5 rounded accent-indigo-500 cursor-pointer" />
+                        </div>
+
+                        <div class="bg-museCard/70 border border-museBorder rounded-xl p-3.5 flex items-center justify-between">
+                            <div>
+                                <div class="text-xs font-bold text-white">Ẩn trình duyệt ngoài màn hình (Off-screen Mode)</div>
+                                <div class="text-[11px] text-gray-400 mt-0.5">Chạy Chrome thật với cờ <code>--window-position=-32000,-32000</code> chống phát hiện headless</div>
+                            </div>
+                            <input id="set-offscreen-mode" type="checkbox" class="w-5 h-5 rounded accent-indigo-500 cursor-pointer" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Khối 2: Chỉnh sửa 4 Mẫu Prompt Wrapper -->
+                <div class="bg-musePanel border border-museBorder rounded-xl p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-museBorder pb-3">
+                        <div>
+                            <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                                <i class="fa-solid fa-code text-violet-400"></i>
+                                <span>Bộ Bọc Prompt (4 Mẫu Prompt Template Wrapper)</span>
+                            </h2>
+                            <p class="text-xs text-gray-400 mt-0.5">
+                                Các biến hỗ trợ: <code>{count}</code> (số lượng ảnh), <code>{ratio}</code> (tỉ lệ khung hình), <code>{prompt}</code> (nội dung prompt gốc).
+                            </p>
+                        </div>
+                        <button onclick="resetPromptTemplates()" class="px-3 py-1.5 rounded-lg bg-museCard hover:bg-gray-800 border border-museBorder text-xs text-gray-300 transition">
+                            <i class="fa-solid fa-rotate-left mr-1"></i> Khôi phục mặc định
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-indigo-300 mb-1.5">1. Text-to-Image (Tạo ảnh từ văn bản)</label>
+                            <textarea id="set-tpl-t2i" rows="3" class="w-full bg-museInput border border-museBorder rounded-lg p-2.5 text-xs text-gray-100 font-mono focus:outline-none focus:border-museAccent"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-indigo-300 mb-1.5">2. Image-to-Image (Có ảnh tham chiếu)</label>
+                            <textarea id="set-tpl-i2i" rows="3" class="w-full bg-museInput border border-museBorder rounded-lg p-2.5 text-xs text-gray-100 font-mono focus:outline-none focus:border-museAccent"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-violet-300 mb-1.5">3. Text-to-Video (Tạo video từ văn bản)</label>
+                            <textarea id="set-tpl-t2v" rows="3" class="w-full bg-museInput border border-museBorder rounded-lg p-2.5 text-xs text-gray-100 font-mono focus:outline-none focus:border-museAccent"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-violet-300 mb-1.5">4. Image-to-Video (Từ ảnh sang video)</label>
+                            <textarea id="set-tpl-i2v" rows="3" class="w-full bg-museInput border border-museBorder rounded-lg p-2.5 text-xs text-gray-100 font-mono focus:outline-none focus:border-museAccent"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ==================== MODAL 1: MEDIA PLAYER (THƯ VIỆN & STUDIO) ==================== -->
+    <div id="modal-media-player" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
+        <div class="bg-musePanel border border-museBorder rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="px-4 py-3 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-circle-play text-indigo-400"></i>
+                    <h3 id="player-modal-title" class="text-sm font-bold text-white">Xem Media</h3>
+                </div>
+                <button onclick="closeMediaPlayerModal()" class="w-7 h-7 rounded-lg bg-museInput hover:bg-rose-500/20 text-gray-400 hover:text-rose-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <!-- Khung phát Video / Ảnh -->
+                <div class="lg:col-span-2 bg-black rounded-xl overflow-hidden flex items-center justify-center min-h-[320px] border border-museBorder">
+                    <video id="player-modal-video" controls autoplay class="hidden max-h-[460px] w-full object-contain"></video>
+                    <img id="player-modal-image" alt="Generated Media" class="hidden max-h-[460px] w-full object-contain" />
+                </div>
+
+                <!-- Thông số & Thao tác -->
+                <div class="flex flex-col justify-between bg-museCard/60 border border-museBorder rounded-xl p-3.5 space-y-3">
+                    <div class="space-y-2.5 text-xs">
+                        <div>
+                            <span class="text-gray-400 block text-[11px]">Dự án:</span>
+                            <strong id="player-meta-project" class="text-white">Mặc định</strong>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <span class="text-gray-400 block text-[11px]">Dung lượng:</span>
+                                <strong id="player-meta-size" class="text-emerald-400">0 MB</strong>
+                            </div>
+                            <div>
+                                <span class="text-gray-400 block text-[11px]">Tỉ lệ:</span>
+                                <strong id="player-meta-ratio" class="text-indigo-300">16:9</strong>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="text-gray-400 block text-[11px]">Ngày tạo:</span>
+                            <strong id="player-meta-date" class="text-gray-200">-</strong>
+                        </div>
+                        <div>
+                            <span class="text-gray-400 block text-[11px] mb-1">Prompt gốc:</span>
+                            <div id="player-meta-prompt" class="selectable bg-museInput border border-museBorder rounded-lg p-2.5 text-xs text-gray-200 max-h-40 overflow-y-auto leading-relaxed"></div>
+                        </div>
+                    </div>
+
+                    <!-- 4 nút hành động: Mở file, Thư mục, Copy prompt, Dùng lại prompt -->
+                    <div class="grid grid-cols-2 gap-2 pt-2 border-t border-museBorder">
+                        <button onclick="playerOpenFile()" class="py-2 px-2.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-up-right-from-square text-sky-400"></i>
+                            <span>Mở file</span>
+                        </button>
+                        <button onclick="playerOpenFolder()" class="py-2 px-2.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-folder-open text-amber-400"></i>
+                            <span>Thư mục</span>
+                        </button>
+                        <button onclick="playerCopyPrompt()" class="py-2 px-2.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-copy text-emerald-400"></i>
+                            <span>Copy prompt</span>
+                        </button>
+                        <button onclick="playerReusePrompt()" class="py-2 px-2.5 rounded-lg bg-museAccent hover:bg-museAccentHover text-white text-xs font-semibold flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-repeat"></i>
+                            <span>Dùng lại prompt</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL 2: THÊM TÀI KHOẢN (1 HOẶC HÀNG LOẠT) ==================== -->
+    <div id="modal-add-account" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
+        <div class="bg-musePanel border border-museBorder rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div class="px-4 py-3 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-user-plus text-indigo-400"></i>
+                    <span>Thêm Tài Khoản Muse.ai</span>
+                </h3>
+                <button onclick="closeAddAccountModal()" class="w-7 h-7 rounded-lg bg-museInput text-gray-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-3 text-xs">
+                <div class="grid grid-cols-2 gap-1 bg-museInput p-1 rounded-lg border border-museBorder font-semibold">
+                    <button onclick="switchAddAccountMode('single')" id="add-acc-mode-single" class="py-1.5 rounded-md bg-museAccent text-white">Thêm 1 tài khoản</button>
+                    <button onclick="switchAddAccountMode('bulk')" id="add-acc-mode-bulk" class="py-1.5 rounded-md text-gray-400 hover:text-white">Thêm hàng loạt (email|pass|proxy)</button>
+                </div>
+
+                <div id="add-acc-single-form" class="space-y-2.5">
+                    <div>
+                        <label class="block text-gray-400 mb-1">Tên hiển thị (Tùy chọn)</label>
+                        <input id="new-acc-name" type="text" placeholder="VD: Muse_Acc_01" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-white focus:outline-none focus:border-museAccent" />
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1">Email đăng nhập Muse *</label>
+                        <input id="new-acc-email" type="email" placeholder="example@gmail.com" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-white focus:outline-none focus:border-museAccent" />
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1">Mật khẩu ghi chú (Tùy chọn)</label>
+                        <input id="new-acc-pass" type="text" placeholder="Mật khẩu (nếu có)" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-2 text-white focus:outline-none focus:border-museAccent" />
+                    </div>
+                </div>
+
+                <div id="add-acc-bulk-form" class="hidden space-y-2">
+                    <label class="block text-gray-400">Nhập danh sách theo cú pháp <code>email|pass|proxy</code> (mỗi dòng 1 tài khoản):</label>
+                    <textarea id="new-acc-bulk-text" rows="6" placeholder="acc1@gmail.com|pass123|192.168.1.1:8080:user:pass&#10;acc2@gmail.com|pass456" class="w-full bg-museInput border border-museBorder rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-museAccent"></textarea>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                        <label class="block text-gray-400 mb-1">Số luồng Ảnh / TK</label>
+                        <input id="new-acc-img-threads" type="number" value="5" min="1" max="20" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-1.5 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1">Số luồng Video / TK</label>
+                        <input id="new-acc-vid-threads" type="number" value="5" min="1" max="20" class="w-full bg-museInput border border-museBorder rounded-lg px-3 py-1.5 text-white" />
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 pt-3 border-t border-museBorder">
+                    <button onclick="closeAddAccountModal()" class="px-4 py-2 rounded-lg bg-museInput border border-museBorder text-gray-300">Hủy</button>
+                    <button onclick="submitAddAccount()" class="px-4 py-2 rounded-lg bg-museAccent hover:bg-museAccentHover text-white font-bold">Thêm ngay</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL 3: CHỌN NHANH & XEM TRƯỚC GHÉP ẢNH ==================== -->
+    <div id="modal-quick-select" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
+        <div class="bg-musePanel border border-museBorder rounded-2xl max-w-md w-full overflow-hidden shadow-2xl">
+            <div class="px-4 py-3 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white">Chọn nhanh tác vụ</h3>
+                <button onclick="closeQuickSelectModal()" class="w-7 h-7 rounded-lg bg-museInput text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-4 space-y-3 text-xs">
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="quickSelectByStatus('pending')" class="py-2 px-3 rounded-lg bg-museCard hover:bg-indigo-600/20 border border-museBorder text-left">Chọn tất cả đang <b>Chờ</b></button>
+                    <button onclick="quickSelectByStatus('failed')" class="py-2 px-3 rounded-lg bg-museCard hover:bg-rose-600/20 border border-museBorder text-left">Chọn tất cả bị <b>Lỗi</b></button>
+                    <button onclick="quickSelectByStatus('completed')" class="py-2 px-3 rounded-lg bg-museCard hover:bg-emerald-600/20 border border-museBorder text-left">Chọn tất cả đã <b>Xong</b></button>
+                    <button onclick="quickSelectByStatus('none')" class="py-2 px-3 rounded-lg bg-museCard hover:bg-gray-700 border border-museBorder text-left">Bỏ chọn tất cả</button>
+                </div>
+                <div class="pt-2 border-t border-museBorder">
+                    <label class="block text-gray-400 mb-1.5">Hoặc chọn theo khoảng STT (Từ STT → Đến STT):</label>
+                    <div class="flex items-center gap-2">
+                        <input id="qs-from-stt" type="number" min="1" value="1" class="w-24 bg-museInput border border-museBorder rounded-lg px-2.5 py-1.5 text-white" />
+                        <span>→</span>
+                        <input id="qs-to-stt" type="number" min="1" value="10" class="w-24 bg-museInput border border-museBorder rounded-lg px-2.5 py-1.5 text-white" />
+                        <button onclick="quickSelectByRange()" class="flex-1 py-1.5 rounded-lg bg-museAccent text-white font-semibold">Áp dụng</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 4: XEM TRƯỚC KẾT QUẢ GHÉP ẢNH THAM CHIẾU -->
+    <div id="modal-matcher-preview" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
+        <div class="bg-musePanel border border-museBorder rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[82vh]">
+            <div class="px-4 py-3 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-eye text-indigo-400"></i>
+                    <span>Xem trước Kết quả Ghép Ảnh Tham Chiếu</span>
+                </h3>
+                <button onclick="closeMatcherPreviewModal()" class="w-7 h-7 rounded-lg bg-museInput text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="matcher-preview-body" class="p-4 overflow-y-auto space-y-2 text-xs flex-1"></div>
+        </div>
+    </div>
+
+    <!-- TOAST CONTAINER -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
