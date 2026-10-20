@@ -205,7 +205,93 @@ def open_native_file_dialog(multiple: bool = True) -> List[str]:
 
 
 def open_native_folder_dialog(title: str = "Chọn thư mục") -> Optional[str]:
-    """Mở hộp thoại chọn thư mục gốc trên Windows bằng tkinter."""
+    """
+    Mở hộp thoại chọn thư mục gốc trên Windows bằng tiến trình con gắn trực tiếp vào
+    WinSta0\\Default để luôn nổi lên phía trước trình duyệt của người dùng.
+    """
+    out_file = BASE_DIR / ".muse" / "picked_folder.txt"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    if out_file.exists():
+        try:
+            out_file.unlink()
+        except Exception:
+            pass
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            k32 = ctypes.windll.kernel32
+            u32 = ctypes.windll.user32
+            hdesk = u32.OpenDesktopW("Default", 0, False, 0x10000000)
+            if hdesk:
+                u32.SetThreadDesktop(hdesk)
+            u32.keybd_event(0x12, 0, 0, 0)
+            u32.keybd_event(0x12, 0, 2, 0)
+
+            script = (
+                "import tkinter as tk; from tkinter import filedialog; from pathlib import Path; "
+                "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True); r.lift(); r.focus_force(); "
+                f"f = filedialog.askdirectory(parent=r, title={repr(title)}); r.destroy(); "
+                f"Path({repr(str(out_file))}).write_text(f or '', encoding='utf-8')"
+            )
+            cmd_line = f'"{sys.executable}" -c "{script}"'
+
+            class STARTUPINFOW(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("lpReserved", wintypes.LPWSTR),
+                    ("lpDesktop", wintypes.LPWSTR),
+                    ("lpTitle", wintypes.LPWSTR),
+                    ("dwX", wintypes.DWORD),
+                    ("dwY", wintypes.DWORD),
+                    ("dwXSize", wintypes.DWORD),
+                    ("dwYSize", wintypes.DWORD),
+                    ("dwXCountChars", wintypes.DWORD),
+                    ("dwYCountChars", wintypes.DWORD),
+                    ("dwFillAttribute", wintypes.DWORD),
+                    ("dwFlags", wintypes.DWORD),
+                    ("wShowWindow", wintypes.WORD),
+                    ("cbReserved2", wintypes.WORD),
+                    ("lpReserved2", ctypes.c_void_p),
+                    ("hStdInput", wintypes.HANDLE),
+                    ("hStdOutput", wintypes.HANDLE),
+                    ("hStdError", wintypes.HANDLE),
+                ]
+
+            class PROCESS_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("hProcess", wintypes.HANDLE),
+                    ("hThread", wintypes.HANDLE),
+                    ("dwProcessId", wintypes.DWORD),
+                    ("dwThreadId", wintypes.DWORD),
+                ]
+
+            si = STARTUPINFOW()
+            si.cb = ctypes.sizeof(si)
+            si.lpDesktop = "WinSta0\\Default"
+            si.dwFlags = 1
+            si.wShowWindow = 0
+            pi = PROCESS_INFORMATION()
+            buf = ctypes.create_unicode_buffer(cmd_line)
+            ok = k32.CreateProcessW(
+                None, buf, None, None, False, 0x08000000, None, None, ctypes.byref(si), ctypes.byref(pi)
+            )
+            if ok:
+                k32.WaitForSingleObject(pi.hProcess, 120000)
+                if pi.hProcess:
+                    k32.CloseHandle(pi.hProcess)
+                if pi.hThread:
+                    k32.CloseHandle(pi.hThread)
+                if out_file.exists():
+                    picked = out_file.read_text(encoding="utf-8").strip()
+                    if picked:
+                        return str(Path(picked).resolve())
+                return None
+        except Exception:
+            pass
+
     selected: List[str] = []
 
     def _run():

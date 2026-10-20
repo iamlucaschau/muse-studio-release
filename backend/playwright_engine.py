@@ -835,23 +835,70 @@ class PlaywrightEngine:
     ) -> Dict[str, Any]:
         """
         Kiểm tra xem Muse đang trong trạng thái Generating hay đã dừng/báo lỗi.
+        Chỉ kiểm tra các phần tử DOM xuất hiện SAU bong bóng tin nhắn chứa prompt_anchor
+        để không bị nhầm với lịch sử chat cũ ở Main chat.
         """
         try:
             return await page.evaluate(
                 """(promptSnippet) => {
-                    const bodyText = document.body ? document.body.innerText : '';
+                    const cleanSnippet = (promptSnippet || '').trim();
+                    let promptNode = null;
+                    if (cleanSnippet.length >= 6) {
+                        const candidates = Array.from(document.querySelectorAll('div, p, span'));
+                        for (let i = candidates.length - 1; i >= 0; i--) {
+                            const el = candidates[i];
+                            if (el.closest('textarea, input, button, nav, aside, [aria-label*="Muse"]')) continue;
+                            const txt = (el.textContent || '').trim();
+                            if (txt.includes(cleanSnippet)) {
+                                const childHas = Array.from(el.children).some(
+                                    c => (c.textContent || '').includes(cleanSnippet)
+                                );
+                                if (!childHas) {
+                                    promptNode = el;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Thu thập toàn bộ text của các node nằm SAU promptNode trong cột chat chính ở giữa
+                    let postPromptText = '';
+                    if (promptNode) {
+                        const allNodes = Array.from(document.querySelectorAll('div, p, span'));
+                        for (const el of allNodes) {
+                            if (el === promptNode || el.contains(promptNode) || promptNode.contains(el)) continue;
+                            if (el.closest('textarea, input, nav, aside, [aria-label*="Muse"]')) continue;
+                            const r = el.getBoundingClientRect();
+                            // Chỉ xét các tin nhắn nằm trong cột khung chat trung tâm (loại trừ cột lịch sử bên phải r.left > 920)
+                            if (r.width > 0 && (r.left < 200 || r.left > 920)) continue;
+                            if (promptNode.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                                const t = (el.innerText || el.textContent || '').trim();
+                                if (t) postPromptText += ' ' + t;
+                            }
+                        }
+                    } else {
+                        postPromptText = document.body ? document.body.innerText : '';
+                    }
+
                     const is_generating = (
-                        bodyText.includes('Generating image') ||
-                        bodyText.includes('Generating video') ||
+                        postPromptText.includes('Generating image') ||
+                        postPromptText.includes('Generating video') ||
+                        postPromptText.includes('Creating video') ||
+                        postPromptText.includes('Creating image') ||
                         !!document.querySelector('button[aria-label*="Stop" i]')
                     );
                     let error_reason = null;
-                    if (!is_generating && window.location.pathname.startsWith('/thread/')) {
+                    if (!is_generating && promptNode) {
+                        const lower = postPromptText.toLowerCase();
                         if (
-                            bodyText.includes("couldn't create that video") ||
-                            bodyText.includes("Failed to create")
+                            lower.includes("không khả dụng ở quốc gia") ||
+                            lower.includes("không render được") ||
+                            lower.includes("couldn't create that video") ||
+                            lower.includes("not available in your country") ||
+                            lower.includes("can't create videos") ||
+                            lower.includes("unable to create")
                         ) {
-                            error_reason = "Muse từ chối tạo video (Cần gắn Proxy Mỹ/US cho tài khoản để mở khóa tạo Video)";
+                            error_reason = "Muse báo tính năng tạo Video bị giới hạn vùng (Region-block) trên tài khoản/IP hiện tại (Cần tài khoản & Proxy Mỹ/US để tạo Video)";
                         }
                     }
                     return { is_generating, error_reason };
@@ -950,13 +997,17 @@ class PlaywrightEngine:
                             if (
                                 v.hasAttribute('data-hatch-avatar-layer') ||
                                 v.hasAttribute('data-hatch-avatar-slot') ||
-                                v.closest('[aria-label*="Muse"]') ||
-                                (v.videoWidth === 480 && v.videoHeight === 480)
+                                v.closest('[aria-label*="Muse"]')
                             ) {
                                 continue;
                             }
-                            if (v.videoWidth > 0 && v.videoWidth < 500) continue;
                             if (!isValidPosition(v)) continue;
+                            if (v.videoWidth === 0 || v.videoHeight === 0) {
+                                try { v.preload = 'auto'; } catch (e) {}
+                                continue;
+                            }
+                            if (v.videoWidth === 480 && v.videoHeight === 480) continue;
+                            if (Math.max(v.videoWidth, v.videoHeight) < 500) continue;
                             if (v.src && (v.src.startsWith('http') || v.src.startsWith('blob:')) && !ignoreSet.has(v.src)) {
                                 return v.src;
                             }
