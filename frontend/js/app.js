@@ -264,7 +264,7 @@ function renderStudioTasksTable() {
     document.getElementById('selected-tasks-counter').textContent = `Đã chọn: ${state.selectedTaskIds.size}`;
 
     if (state.tasks.length === 0) {
-        tbody.innerHTML = `
+        const emptyHtml = `
             <tr>
                 <td colspan="7" class="py-16 text-center text-gray-500">
                     <i class="fa-solid fa-wand-magic-sparkles text-2xl text-indigo-400/40 mb-2 block"></i>
@@ -272,10 +272,14 @@ function renderStudioTasksTable() {
                 </td>
             </tr>
         `;
+        if (state._lastTasksHtml !== emptyHtml) {
+            tbody.innerHTML = emptyHtml;
+            state._lastTasksHtml = emptyHtml;
+        }
         return;
     }
 
-    tbody.innerHTML = state.tasks.map(t => {
+    const newHtml = state.tasks.map(t => {
         const isSelected = state.selectedTaskIds.has(t.id);
         const typeBadge = getTaskTypeBadge(t.task_type, t.aspect_ratio, t.ref_images);
         const statusCell = getTaskStatusCell(t);
@@ -288,7 +292,7 @@ function renderStudioTasksTable() {
             : '';
 
         return `
-            <tr class="studio-row transition ${isSelected ? 'selected' : ''}">
+            <tr data-task-id="${t.id}" class="studio-row transition ${isSelected ? 'selected' : ''}">
                 <td class="py-2.5 px-3 text-center">
                     <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelectTask(${t.id}, this.checked)" class="rounded border-gray-600 bg-museInput text-indigo-600 focus:ring-0 cursor-pointer" />
                 </td>
@@ -298,7 +302,7 @@ function renderStudioTasksTable() {
                         <span class="font-bold text-white">${escapeHtml(t.task_name)}</span>
                         ${refTag}
                     </div>
-                    <p class="text-gray-400 truncate mt-0.5" title="${escapeHtml(t.prompt_text)}">${escapeHtml(t.prompt_text)}</p>
+                    <p class="text-gray-400 truncate mt-0.5 cursor-pointer hover:text-indigo-300" onclick="openEditPromptModal(${t.id})" title="Bấm để sửa Prompt: ${escapeHtml(t.prompt_text)}">${escapeHtml(t.prompt_text)}</p>
                 </td>
                 <td class="py-2.5 px-2 text-center">${typeBadge}</td>
                 <td class="py-2.5 px-2 text-gray-300 truncate max-w-[120px]">${accLabel}</td>
@@ -311,6 +315,9 @@ function renderStudioTasksTable() {
                         <button onclick="openTaskFolder(${t.id})" title="Mở thư mục chứa file" class="w-7 h-7 rounded-lg bg-museCard hover:bg-gray-700 text-amber-300 flex items-center justify-center transition">
                             <i class="fa-solid fa-folder-open text-[11px]"></i>
                         </button>
+                        <button onclick="openEditPromptModal(${t.id})" title="Sửa Prompt tác vụ" class="w-7 h-7 rounded-lg bg-museCard hover:bg-indigo-500/25 text-sky-300 flex items-center justify-center transition">
+                            <i class="fa-solid fa-pen-to-square text-[11px]"></i>
+                        </button>
                         <button onclick="retrySingleTask(${t.id})" title="Chạy lại tác vụ này (Retry)" class="w-7 h-7 rounded-lg bg-museCard hover:bg-emerald-500/25 text-emerald-300 flex items-center justify-center transition">
                             <i class="fa-solid fa-rotate-right text-[11px]"></i>
                         </button>
@@ -322,6 +329,12 @@ function renderStudioTasksTable() {
             </tr>
         `;
     }).join('');
+
+    if (state._lastTasksHtml === newHtml) {
+        return;
+    }
+    state._lastTasksHtml = newHtml;
+    tbody.innerHTML = newHtml;
 }
 
 function getTaskTypeBadge(taskType, ratio, refImages) {
@@ -615,6 +628,68 @@ function clearPromptTextarea() {
     onPromptTextareaInput();
 }
 
+async function onPromptFileSelected(event) {
+    const file = event.target && event.target.files ? event.target.files[0] : null;
+    if (!file) return;
+    try {
+        const text = await file.text();
+        const lines = text
+            .split(/\r?\n/)
+            .map(ln => ln.trim())
+            .filter(ln => ln && !ln.startsWith('#'));
+        if (lines.length === 0) {
+            showToast('File không có dòng Prompt nào hợp lệ', 'warning');
+            return;
+        }
+        const ta = document.getElementById('studio-prompt-textarea');
+        ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + lines.join('\n');
+        onPromptTextareaInput();
+        showToast(`Đã nạp ${lines.length} dòng Prompt từ file ${file.name}!`, 'success');
+    } catch (err) {
+        showToast('Không thể đọc file Prompt', 'error');
+    } finally {
+        event.target.value = '';
+    }
+}
+
+function openEditPromptModal(taskId) {
+    const t = state.tasks.find(x => x.id === taskId);
+    if (!t) return;
+    document.getElementById('edit-prompt-task-id').value = t.id;
+    document.getElementById('edit-prompt-modal-title').textContent = `Sửa Prompt: ${t.task_name}`;
+    document.getElementById('edit-prompt-type').value = t.task_type || 'video';
+    document.getElementById('edit-prompt-ratio').value = t.aspect_ratio || '16:9';
+    document.getElementById('edit-prompt-textarea').value = t.prompt_text || '';
+    document.getElementById('modal-edit-prompt').classList.remove('hidden');
+}
+
+function closeEditPromptModal() {
+    document.getElementById('modal-edit-prompt').classList.add('hidden');
+}
+
+async function submitEditPrompt(autoStart) {
+    const taskId = parseInt(document.getElementById('edit-prompt-task-id').value || '0', 10);
+    const prompt_text = document.getElementById('edit-prompt-textarea').value.trim();
+    const task_type = document.getElementById('edit-prompt-type').value;
+    const aspect_ratio = document.getElementById('edit-prompt-ratio').value;
+    if (!taskId || !prompt_text) {
+        showToast('Nội dung Prompt không được để trống', 'warning');
+        return;
+    }
+    const res = await fetch(`/api/tasks/${taskId}/prompt`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_text, task_type, aspect_ratio, auto_start: autoStart })
+    });
+    if (res.ok) {
+        closeEditPromptModal();
+        showToast(autoStart ? 'Đã cập nhật Prompt và chạy lại tác vụ!' : 'Đã lưu thay đổi Prompt!', 'success');
+        await refreshStudioState();
+    } else {
+        showToast('Lỗi khi cập nhật Prompt', 'error');
+    }
+}
+
 function selectRefImagesDialog() {
     const input = document.getElementById('browser-ref-images-input');
     if (input) {
@@ -859,7 +934,7 @@ async function loadGallery() {
                             <span>${escapeHtml(item.project_name || '')}</span>
                             <span>${escapeHtml(item.completed_at || '')}</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-1.5">
+                        <div class="grid grid-cols-3 gap-1.5">
                             <button onclick="event.stopPropagation(); galleryQuickOpenFile(${item.id})" class="py-1 px-2 rounded-md bg-museInput hover:bg-gray-800 border border-museBorder text-[11px] font-semibold text-gray-200 flex items-center justify-center gap-1 transition">
                                 <i class="fa-solid fa-up-right-from-square text-sky-400 text-[10px]"></i>
                                 <span>Mở file</span>
@@ -868,12 +943,53 @@ async function loadGallery() {
                                 <i class="fa-solid fa-folder-open text-amber-400 text-[10px]"></i>
                                 <span>Thư mục</span>
                             </button>
+                            <button onclick="event.stopPropagation(); galleryQuickDelete(${item.id})" title="Xóa Media & File trên ổ đĩa" class="py-1 px-2 rounded-md bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 text-[11px] font-semibold text-rose-300 flex items-center justify-center gap-1 transition">
+                                <i class="fa-solid fa-trash-can text-[10px]"></i>
+                                <span>Xóa</span>
+                            </button>
                         </div>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+async function galleryQuickDelete(taskId) {
+    if (!confirm('Xóa media này khỏi Thư viện và xóa luôn file gốc trên ổ cứng?')) return;
+    try {
+        const res = await fetch(`/api/gallery/${taskId}/delete`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast('Đã xóa media và file trên ổ đĩa!', 'info');
+            await loadGallery();
+            await refreshStudioTasks(true);
+        } else {
+            showToast(data.detail || 'Không thể xóa media', 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi khi xóa media', 'error');
+    }
+}
+
+async function playerDeleteMedia() {
+    if (!state.activePlayerItem?.id) return;
+    if (!confirm('Xóa media này khỏi Thư viện và xóa luôn file gốc trên ổ cứng?')) return;
+    const taskId = state.activePlayerItem.id;
+    closeMediaPlayerModal();
+    try {
+        const res = await fetch(`/api/gallery/${taskId}/delete`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast('Đã xóa media và file trên ổ đĩa!', 'info');
+            await loadGallery();
+            await refreshStudioTasks(true);
+        } else {
+            showToast(data.detail || 'Không thể xóa media', 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi khi xóa media', 'error');
+    }
 }
 
 async function galleryQuickOpenFile(taskId) {
@@ -1065,6 +1181,9 @@ async function loadAccounts(isBackground = false) {
                     </td>
                     <td class="py-3 px-3 text-right">
                         <div class="flex items-center justify-end gap-1.5">
+                            <button onclick="clearAccountVideoMemory(${acc.id})" title="Xóa bộ nhớ chặn tạo Video theo vùng (Region-Block Memory) trên tài khoản này" class="px-2 py-1 rounded-lg bg-violet-500/15 hover:bg-violet-500/30 border border-violet-500/30 text-violet-300 text-[11px] font-semibold transition">
+                                Fix Video
+                            </button>
                             <button onclick="checkSingleAccountQuota(${acc.id})" class="px-2.5 py-1 rounded-lg bg-museCard hover:bg-gray-700 border border-museBorder text-sky-300 text-[11px] font-semibold transition">
                                 Hạn mức
                             </button>
@@ -1085,6 +1204,21 @@ async function loadAccounts(isBackground = false) {
         }).join('');
     } catch (e) {
         console.error(e);
+    }
+}
+
+async function clearAccountVideoMemory(accId) {
+    showToast('Đang xóa bộ nhớ Region-Block Video trên Muse.ai...', 'info');
+    try {
+        const res = await fetch(`/api/accounts/${accId}/clear-memory`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast(data.message || 'Đã xóa bộ nhớ chặn tạo Video thành công!', 'success');
+        } else {
+            showToast(data.message || data.detail || 'Không thể xóa bộ nhớ tài khoản', 'warning');
+        }
+    } catch (e) {
+        showToast('Lỗi kết nối khi xóa bộ nhớ tài khoản', 'error');
     }
 }
 
@@ -1237,8 +1371,9 @@ async function loadProxies() {
     }
 
     tbody.innerHTML = state.proxies.map(p => {
+        const countryTag = p.country_code ? ` · ${escapeHtml(p.country_code)}` : '';
         const statusBadge = p.status === 'Live'
-            ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold">Live</span>`
+            ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold">Live${countryTag}</span>`
             : p.status === 'Dead'
                 ? `<span class="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[11px] font-semibold">Dead</span>`
                 : `<span class="px-2 py-0.5 rounded-full bg-gray-700/60 text-gray-300 text-[11px]">Chưa kiểm tra</span>`;
@@ -1338,8 +1473,14 @@ async function loadSettingsIntoForm() {
     document.getElementById('set-output-dir').value = s.output_dir || '';
     document.getElementById('set-image-timeout').value = s.image_timeout_sec || '300';
     document.getElementById('set-video-timeout').value = s.video_timeout_sec || '600';
+    const retryEl = document.getElementById('set-auto-retry');
+    if (retryEl) retryEl.value = s.auto_retry_count || '1';
+    const sleepEl = document.getElementById('set-idle-sleep');
+    if (sleepEl) sleepEl.value = s.browser_idle_sleep_sec || '180';
     document.getElementById('set-auto-approve').checked = s.auto_approve === '1';
     document.getElementById('set-offscreen-mode').checked = s.offscreen_mode === '1';
+    const groupEl = document.getElementById('set-group-by-project');
+    if (groupEl) groupEl.checked = s.group_output_by_project === '1';
 
     document.getElementById('set-tpl-t2i').value = s.tpl_text_to_image || '';
     document.getElementById('set-tpl-i2i').value = s.tpl_image_to_image || '';
@@ -1360,8 +1501,11 @@ async function saveAllSettings() {
         output_dir: document.getElementById('set-output-dir').value.trim(),
         image_timeout_sec: document.getElementById('set-image-timeout').value,
         video_timeout_sec: document.getElementById('set-video-timeout').value,
+        auto_retry_count: document.getElementById('set-auto-retry')?.value || '1',
+        browser_idle_sleep_sec: document.getElementById('set-idle-sleep')?.value || '180',
         auto_approve: document.getElementById('set-auto-approve').checked ? '1' : '0',
         offscreen_mode: document.getElementById('set-offscreen-mode').checked ? '1' : '0',
+        group_output_by_project: document.getElementById('set-group-by-project')?.checked ? '1' : '0',
         tpl_text_to_image: document.getElementById('set-tpl-t2i').value,
         tpl_image_to_image: document.getElementById('set-tpl-i2i').value,
         tpl_text_to_video: document.getElementById('set-tpl-t2v').value,

@@ -167,17 +167,33 @@ class TaskOrchestrator:
 
     async def _dispatch_loop(self) -> None:
         try:
+            idle_loops = 0
             while self._is_dispatching:
                 dispatched_any = await self._dispatch_step()
                 if not dispatched_any and len(self._running_tasks) == 0:
-                    # Kiểm tra còn task pending nào không
                     conn = get_connection()
                     pending_row = conn.execute(
                         "SELECT COUNT(*) AS c FROM tasks WHERE status = 'pending'"
                     ).fetchone()
                     conn.close()
                     if pending_row["c"] == 0:
-                        break
+                        idle_loops += 1
+                        settings = get_settings()
+                        idle_sec = int(settings.get("browser_idle_sleep_sec", "180") or 180)
+                        await self.pw_engine.cleanup_idle_sessions(idle_sec)
+                        # Kiểm tra xem còn session Chrome nào đang mở không
+                        has_open_browser = any(
+                            s.context is not None for s in self.pw_engine._sessions.values()
+                        )
+                        if not has_open_browser or idle_loops > max(10, idle_sec * 2):
+                            break
+                        await asyncio.sleep(2.0)
+                        continue
+                else:
+                    idle_loops = 0
+                    settings = get_settings()
+                    idle_sec = int(settings.get("browser_idle_sleep_sec", "180") or 180)
+                    await self.pw_engine.cleanup_idle_sessions(idle_sec)
                 await asyncio.sleep(0.8)
         finally:
             self._is_dispatching = False
@@ -191,6 +207,7 @@ class TaskOrchestrator:
             global_max_threads = max(
                 1, int(settings.get("global_max_threads", "25") or 25)
             )
+            schedule_mode = settings.get("schedule_mode", "round_robin")
 
             current_total_threads = len(self._running_tasks)
             if current_total_threads >= global_max_threads:
@@ -223,7 +240,6 @@ class TaskOrchestrator:
             conn.close()
 
             if not enabled_accounts:
-                # Nếu chưa có tài khoản nào được bật, thông báo trên status_message của task
                 conn = get_connection()
                 conn.execute(
                     """
@@ -251,6 +267,7 @@ class TaskOrchestrator:
                     enabled_accounts,
                     is_image_task=is_image_task,
                     max_concurrent_accounts=max_concurrent_accounts,
+                    schedule_mode=schedule_mode,
                 )
                 if chosen_acc is None:
                     continue
@@ -305,6 +322,7 @@ class TaskOrchestrator:
         accounts: List[Dict[str, Any]],
         is_image_task: bool,
         max_concurrent_accounts: int,
+        schedule_mode: str = "round_robin",
     ) -> Optional[Dict[str, Any]]:
         if not accounts:
             return None
@@ -317,20 +335,52 @@ class TaskOrchestrator:
             if cnt > 0:
                 active_account_ids.add(acc_id)
 
+        # Chế độ 1: Tuần tự theo tải (sequential) -> Ưu tiên tài khoản đã mở sẵn Chrome hoặc đang chạy chưa kịch trần luồng
+        if schedule_mode == "sequential":
+            candidates = []
+            for acc in accounts:
+                acc_id = int(acc["id"])
+                if (
+                    acc_id not in active_account_ids
+                    and len(active_account_ids) >= max_concurrent_accounts
+                ):
+                    continue
+                if is_image_task:
+                    limit = max(1, int(acc.get("image_threads") or 5))
+                    current = self._account_running_img.get(acc_id, 0)
+                else:
+                    limit = max(1, int(acc.get("video_threads") or 5))
+                    current = self._account_running_vid.get(acc_id, 0)
+                if current < limit:
+                    is_warm = (
+                        acc_id in active_account_ids
+                        or (
+                            acc_id in self.pw_engine._sessions
+                            and self.pw_engine._sessions[acc_id].context is not None
+                        )
+                    )
+                    total_load = self._account_running_img.get(
+                        acc_id, 0
+                    ) + self._account_running_vid.get(acc_id, 0)
+                    candidates.append((0 if is_warm else 1, total_load, acc_id, acc))
+            if candidates:
+                candidates.sort(key=lambda x: (x[0], x[1], x[2]))
+                return candidates[0][3]
+            return None
+
+        # Chế độ 2: Luân phiên (round_robin)
         n = len(accounts)
         for offset in range(n):
             idx = (self._rr_index + offset) % n
             acc = accounts[idx]
             acc_id = int(acc["id"])
 
-            # Kiểm tra giới hạn Tầng 1: max_concurrent_accounts
             if (
                 acc_id not in active_account_ids
                 and len(active_account_ids) >= max_concurrent_accounts
             ):
                 continue
 
-            # Kiểm tra giới hạn Tầng 2: image_threads / video_threads trên từng tài khoản
             if is_image_task:
                 limit = max(1, int(acc.get("image_threads") or 5))
                 current = self._account_running_img.get(acc_id, 0)
@@ -365,7 +415,13 @@ class TaskOrchestrator:
             if p_row:
                 proxy = dict(p_row)
 
+        last_state = {"pct": -1, "msg": ""}
+
         def update_progress(percent: int, message: str) -> None:
+            if last_state["pct"] == percent and last_state["msg"] == message:
+                return
+            last_state["pct"] = percent
+            last_state["msg"] = message
             try:
                 conn = get_connection()
                 conn.execute(
@@ -413,19 +469,45 @@ class TaskOrchestrator:
                     (acc_id,),
                 )
             else:
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET status = 'failed',
-                        status_message = ?
-                    WHERE id = ?
-                    """,
-                    (msg, task_id),
+                max_retries = max(0, int(settings.get("auto_retry_count", "1") or 0))
+                cur_retry = int(task.get("retry_count") or 0)
+                is_permanent_err = (
+                    cancel_event.is_set()
+                    or "Region-block" in (msg or "")
+                    or "Đã dừng" in (msg or "")
+                    or "chưa đăng nhập" in (msg or "")
                 )
-                conn.execute(
-                    "UPDATE accounts SET failed_tasks = failed_tasks + 1 WHERE id = ?",
-                    (acc_id,),
-                )
+                if not is_permanent_err and cur_retry < max_retries:
+                    next_retry = cur_retry + 1
+                    conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status = 'pending',
+                            progress_percent = 0,
+                            retry_count = ?,
+                            status_message = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            next_retry,
+                            f"Tự động thử lại ({next_retry}/{max_retries})...",
+                            task_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status = 'failed',
+                            status_message = ?
+                        WHERE id = ?
+                        """,
+                        (msg, task_id),
+                    )
+                    conn.execute(
+                        "UPDATE accounts SET failed_tasks = failed_tasks + 1 WHERE id = ?",
+                        (acc_id,),
+                    )
             conn.commit()
             conn.close()
         except Exception as exc:
@@ -469,7 +551,7 @@ class TaskOrchestrator:
 
 async def test_single_proxy(proxy_row: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Kiểm tra kết nối thực tế của 1 Proxy và đo độ trễ (latency_ms).
+    Kiểm tra kết nối thực tế của 1 Proxy, đo độ trễ (latency_ms) và xác định Quốc gia (Geo-IP country_code).
     """
     pid = int(proxy_row["id"])
     proto = (proxy_row.get("protocol") or "http").lower()
@@ -486,25 +568,60 @@ async def test_single_proxy(proxy_row: Dict[str, Any]) -> Dict[str, Any]:
     start_ts = time.perf_counter()
     status = "Dead"
     latency_ms = None
+    country_code = None
 
     try:
         async with httpx.AsyncClient(
             proxy=proxy_url, timeout=10.0, verify=False, follow_redirects=True
         ) as client:
-            resp = await client.get("https://www.google.com/generate_204")
-            if resp.status_code in (200, 204, 301, 302):
-                status = "Live"
-                latency_ms = int((time.perf_counter() - start_ts) * 1000)
+            # 1. Thử lấy Geo-IP + kiểm tra kết nối qua Cloudflare trace (cực nhẹ và chuẩn xác)
+            try:
+                cf_resp = await client.get("https://www.cloudflare.com/cdn-cgi/trace")
+                if cf_resp.status_code == 200 and "loc=" in cf_resp.text:
+                    status = "Live"
+                    latency_ms = int((time.perf_counter() - start_ts) * 1000)
+                    for line in cf_resp.text.splitlines():
+                        if line.startswith("loc="):
+                            cc = line.split("=", 1)[1].strip().upper()
+                            if cc and cc != "XX":
+                                country_code = cc
+                            break
+            except Exception:
+                pass
+
+            # 2. Fallback qua ipinfo.io hoặc google generate_204 nếu Cloudflare bị chặn
+            if status != "Live":
+                start_ts = time.perf_counter()
+                resp = await client.get("https://www.google.com/generate_204")
+                if resp.status_code in (200, 204, 301, 302):
+                    status = "Live"
+                    latency_ms = int((time.perf_counter() - start_ts) * 1000)
+
+            if status == "Live" and not country_code:
+                try:
+                    geo_resp = await client.get("https://ipinfo.io/json", timeout=4.0)
+                    if geo_resp.status_code == 200:
+                        data = geo_resp.json()
+                        if data.get("country"):
+                            country_code = str(data["country"]).upper()
+                except Exception:
+                    pass
     except Exception:
         status = "Dead"
         latency_ms = None
+        country_code = None
 
     conn = get_connection()
     conn.execute(
-        "UPDATE proxies SET status = ?, latency_ms = ? WHERE id = ?",
-        (status, latency_ms, pid),
+        "UPDATE proxies SET status = ?, latency_ms = ?, country_code = ? WHERE id = ?",
+        (status, latency_ms, country_code, pid),
     )
     conn.commit()
     conn.close()
 
-    return {"id": pid, "status": status, "latency_ms": latency_ms}
+    return {
+        "id": pid,
+        "status": status,
+        "latency_ms": latency_ms,
+        "country_code": country_code,
+    }

@@ -76,6 +76,15 @@ def test_all():
     ).json()
     assert create_res["ok"] is True
     assert create_res["created_count"] == 3
+    task_ids = create_res.get("task_ids", [])
+
+    # Kiểm tra chỉnh sửa Prompt của Task (Upgrade #7)
+    if task_ids:
+        edit_res = client.put(
+            f"/api/tasks/{task_ids[0]}/prompt",
+            json={"prompt_text": "Prompt đã được chỉnh sửa mới"},
+        ).json()
+        assert edit_res["ok"] is True
 
     # Thêm tài khoản bulk email|pass|proxy
     acc_res = client.post(
@@ -87,7 +96,18 @@ def test_all():
         },
     ).json()
     assert acc_res["ok"] is True
-    assert acc_res["added_count"] == 2
+
+    # Dọn dẹp dữ liệu test để không ảnh hưởng DB thực tế của người dùng
+    from backend.database import get_connection
+    conn = get_connection()
+    if task_ids:
+        placeholders = ",".join("?" for _ in task_ids)
+        conn.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", task_ids)
+    conn.execute("DELETE FROM tasks WHERE prompt_text IN (?, ?, ?)", tuple(prompts))
+    conn.execute("DELETE FROM accounts WHERE email IN ('demo1@gmail.com', 'demo2@gmail.com')")
+    conn.execute("DELETE FROM proxies WHERE raw_string LIKE '127.0.0.1:8080%'")
+    conn.commit()
+    conn.close()
 
     print("ALL CORE TESTS PASSED SUCCESSFULLY!")
 

@@ -102,6 +102,7 @@ class AccountBrowserSession:
         self._lock = asyncio.Lock()
         self.submit_lock = asyncio.Lock()
         self.active_tabs = 0
+        self.last_used_ts: float = time.time()
 
     async def ensure_context(self) -> Any:
         async with self._lock:
@@ -157,6 +158,7 @@ class AccountBrowserSession:
         ctx = await self.ensure_context()
         page = await ctx.new_page()
         self.active_tabs += 1
+        self.last_used_ts = time.time()
         return page
 
     async def close_tab(self, page: Any) -> None:
@@ -167,6 +169,7 @@ class AccountBrowserSession:
             pass
         finally:
             self.active_tabs = max(0, self.active_tabs - 1)
+            self.last_used_ts = time.time()
 
     async def close_context(self) -> None:
         async with self._lock:
@@ -231,6 +234,84 @@ class PlaywrightEngine:
         sess = self._sessions.pop(account_id, None)
         if sess:
             await sess.close_context()
+
+    async def cleanup_idle_sessions(self, idle_timeout_sec: int = 180) -> int:
+        """
+        Tự động đóng (Auto-Sleep) các phiên trình duyệt Chrome không còn Tab hoạt động
+        sau khoảng thời gian nhàn rỗi (mặc định 180 giây) để giải phóng RAM hệ thống.
+        """
+        if idle_timeout_sec <= 0:
+            return 0
+        now_ts = time.time()
+        slept_count = 0
+        async with self._sessions_lock:
+            for acc_id, sess in list(self._sessions.items()):
+                if (
+                    sess.context is not None
+                    and sess.active_tabs <= 0
+                    and (now_ts - sess.last_used_ts) >= idle_timeout_sec
+                ):
+                    await sess.close_context()
+                    slept_count += 1
+        return slept_count
+
+    async def clear_account_video_memory(self, account_id: int) -> Dict[str, Any]:
+        """
+        Gửi chỉ thị xóa ghi chú giới hạn vùng (Region-block) trong Memory của tài khoản Muse
+        để tài khoản luôn gọi trực tiếp công cụ tạo Video khi đã gắn Proxy US.
+        """
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "message": "Không tìm thấy tài khoản"}
+        account = dict(row)
+        proxy = None
+        if account.get("proxy_id"):
+            p_row = conn.execute("SELECT * FROM proxies WHERE id = ?", (account["proxy_id"],)).fetchone()
+            if p_row:
+                proxy = dict(p_row)
+        conn.close()
+
+        settings = get_settings()
+        offscreen = settings.get("offscreen_mode", "1") == "1"
+        session = await self.get_or_create_session(account, proxy, offscreen=offscreen)
+        page = None
+        try:
+            async with session.submit_lock:
+                page = await session.new_tab()
+                await page.goto(MUSE_COMPOSER_URL, wait_until="domcontentloaded", timeout=35000)
+                composer = None
+                for _ in range(12):
+                    composer = await self._detect_composer(page)
+                    if composer is not None:
+                        break
+                    await asyncio.sleep(1.0)
+                if composer is None:
+                    return {
+                        "ok": False,
+                        "message": "Không tìm thấy khung Composer (Hãy kiểm tra đăng nhập tài khoản)",
+                    }
+                await composer.click()
+                await composer.fill(
+                    "Please update your memory and preferences immediately: remove any note or assumption that video generation is unavailable or region-blocked for this account. Whenever I ask for a video, always invoke the video generation tool directly without falling back to keyframes."
+                )
+                await asyncio.sleep(0.5)
+                send_btn = page.locator("button[aria-label='Send']").first
+                if await send_btn.count() > 0 and await send_btn.is_visible():
+                    await send_btn.click()
+                else:
+                    await page.keyboard.press("Enter")
+            await asyncio.sleep(8.0)
+            return {
+                "ok": True,
+                "message": "Đã gửi lệnh làm sạch Memory giới hạn Video trên tài khoản Muse!",
+            }
+        except Exception as exc:
+            return {"ok": False, "message": f"Lỗi khi xóa Memory Video: {exc}"}
+        finally:
+            if page is not None:
+                await session.close_tab(page)
 
     async def shutdown(self) -> None:
         for acc_id in list(self._sessions.keys()):
@@ -612,6 +693,9 @@ class PlaywrightEngine:
         safe_task = re.sub(r'[<>:"/\\|?*]', "_", task_name.strip()) or f"Task_{task['id']}"
         sub_folder = "IMG" if task_type == "image" else "VIDEO"
         project_out_dir = output_root / sub_folder
+        if settings.get("group_output_by_project", "0") == "1":
+            safe_proj = re.sub(r'[<>:"/\\|?*]', "_", (project_name or "Mặc định").strip()) or "Mặc_định"
+            project_out_dir = project_out_dir / safe_proj
         project_out_dir.mkdir(parents=True, exist_ok=True)
 
         ext = ".png" if task_type == "image" else ".mp4"

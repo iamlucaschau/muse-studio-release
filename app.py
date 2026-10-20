@@ -140,6 +140,17 @@ class RefImageUploadReq(BaseModel):
     replace: bool = False
 
 
+class TaskUpdatePromptReq(BaseModel):
+    prompt_text: str
+    task_type: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    auto_start: bool = False
+
+
+class GalleryDeleteReq(BaseModel):
+    delete_disk_file: bool = True
+
+
 # ==================== HELPER DIALOGS ====================
 
 
@@ -667,7 +678,39 @@ async def api_stop_tasks(req: BatchTaskActionReq):
 
 @app.post("/api/tasks/{task_id}/retry")
 async def api_retry_single_task(task_id: int):
+    conn = get_connection()
+    conn.execute("UPDATE tasks SET retry_count = 0 WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
     return await orchestrator.start_tasks(task_ids=[task_id], only_failed=False)
+
+
+@app.put("/api/tasks/{task_id}/prompt")
+async def api_update_task_prompt(task_id: int, req: TaskUpdatePromptReq):
+    clean_prompt = req.prompt_text.strip()
+    if not clean_prompt:
+        raise HTTPException(status_code=400, detail="Nội dung Prompt không được để trống")
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Không tìm thấy tác vụ")
+    t_type = req.task_type or row["task_type"]
+    a_ratio = req.aspect_ratio or row["aspect_ratio"]
+    conn.execute(
+        """
+        UPDATE tasks
+        SET prompt_text = ?, task_type = ?, aspect_ratio = ?, retry_count = 0
+        WHERE id = ?
+        """,
+        (clean_prompt, t_type, a_ratio, task_id),
+    )
+    conn.commit()
+    conn.close()
+
+    if req.auto_start:
+        await orchestrator.start_tasks(task_ids=[task_id], only_failed=False)
+    return {"ok": True}
 
 
 @app.post("/api/tasks/delete")
@@ -701,13 +744,18 @@ def _resolve_media_path(raw_path: str) -> Path:
         p = (BASE_DIR / raw_path).resolve()
     if p.exists():
         return p.resolve()
-    # Fallback lookup in output/IMG and output/VIDEO if path was moved
+    # Fallback lookup in output/IMG and output/VIDEO (and project subfolders) if path was moved
     fname = p.name
     if fname:
         for sub in ("IMG", "VIDEO"):
-            cand = (BASE_DIR / "output" / sub / fname).resolve()
+            base_sub = BASE_DIR / "output" / sub
+            cand = (base_sub / fname).resolve()
             if cand.exists():
                 return cand
+            if base_sub.exists():
+                for child in base_sub.iterdir():
+                    if child.is_dir() and (child / fname).exists():
+                        return (child / fname).resolve()
     return p.resolve()
 
 
@@ -843,6 +891,27 @@ async def api_stream_media(path: str = Query(...)):
         raise HTTPException(status_code=404, detail="File không tồn tại")
     mime, _ = mimetypes.guess_type(str(p))
     return FileResponse(str(p), media_type=mime or "application/octet-stream")
+
+
+@app.post("/api/gallery/{task_id}/delete")
+async def api_delete_gallery_item(task_id: int, req: GalleryDeleteReq):
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Không tìm thấy media")
+    fpath = row["output_file_path"]
+    if req.delete_disk_file and fpath:
+        try:
+            resolved = _resolve_media_path(fpath)
+            if resolved.exists() and resolved.is_file():
+                resolved.unlink()
+        except Exception:
+            pass
+    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.post("/api/system/open-file")
@@ -1102,6 +1171,11 @@ async def api_check_account_cookie(account_id: int):
 @app.post("/api/accounts/{account_id}/check-quota")
 async def api_check_account_quota(account_id: int):
     return await pw_engine.check_account_cookie_and_quota(account_id, check_quota=True)
+
+
+@app.post("/api/accounts/{account_id}/clear-memory")
+async def api_clear_account_video_memory(account_id: int):
+    return await pw_engine.clear_account_video_memory(account_id)
 
 
 @app.post("/api/accounts/batch-check-cookies")
