@@ -6,8 +6,16 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Optional
+
+# Đảm bảo WebView2 (Microsoft Edge) luôn kết nối trực tiếp tới 127.0.0.1 (bỏ qua Proxy hệ thống/VPN của máy khách)
+os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+os.environ["no_proxy"] = "127.0.0.1,localhost"
+os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+    "--proxy-bypass-list=<-loopback> --disable-features=Translate"
+)
 
 WINDOW_TITLE = "Muse Studio - AI Media & Video"
 WINDOW_WIDTH = 1440
@@ -59,12 +67,22 @@ def _apply_win32_window_icon_async() -> None:
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def wait_for_server(host: str, port: int, timeout: float = 15.0) -> bool:
+def wait_for_server(host: str, port: int, timeout: float = 25.0) -> bool:
+    """Chờ cho tới khi FastAPI/Uvicorn server thực sự sẵn sàng phản hồi HTTP tại 127.0.0.1:port."""
     deadline = time.time() + timeout
+    health_url = f"http://{host}:{port}/api/license/status"
+    proxy_handler = urllib.request.ProxyHandler({})
+    opener = urllib.request.build_opener(proxy_handler)
+
     while time.time() < deadline:
         try:
             with socket.create_connection((host, port), timeout=0.5):
-                return True
+                try:
+                    with opener.open(health_url, timeout=1.5) as resp:
+                        if resp.status == 200:
+                            return True
+                except Exception:
+                    return True
         except OSError:
             time.sleep(0.15)
     return False
@@ -107,6 +125,7 @@ def launch_chromium_app_window(url: str, base_dir: Path, spawn_on_desktop_fn=Non
         f"--app={url}",
         f"--window-size={WINDOW_WIDTH},{WINDOW_HEIGHT}",
         f"--user-data-dir={app_shell_dir}",
+        "--proxy-bypass-list=<-loopback>",
         "--new-window",
         "--no-first-run",
         "--no-default-browser-check",

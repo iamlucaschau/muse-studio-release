@@ -11,7 +11,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -1734,18 +1734,109 @@ async def serve_index():
 # ==================== DESKTOP RUNNER ====================
 
 
+def _ensure_valid_stdio() -> None:
+    """
+    Khi khởi chạy qua pythonw.exe (không có cửa sổ CMD đen), sys.stdout và sys.stderr sẽ là None,
+    khiến Uvicorn bị văng lỗi AttributeError ('NoneType' object has no attribute 'isatty') và không mở được cổng 127.0.0.1:18688.
+    Hàm này tự động chuyển hướng stdout/stderr vào file log .muse/muse_server.log khi chạy không có console.
+    """
+    log_dir = BASE_DIR / ".muse"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path = log_dir / "muse_server.log"
+
+    if sys.stdout is None:
+        sys.stdout = open(log_file_path, "a", encoding="utf-8", buffering=1)
+    else:
+        try:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    if sys.stderr is None:
+        sys.stderr = open(log_file_path, "a", encoding="utf-8", buffering=1)
+    else:
+        try:
+            if hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def start_uvicorn(host: str, port: int) -> None:
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    """
+    Khởi chạy Uvicorn Server an toàn tuyệt đối bên trong background thread hoặc pythonw.exe
+    (tắt log_config mặc định vốn gọi isatty() và tắt signal handler chỉ chạy được ở main thread).
+    """
+    _ensure_valid_stdio()
+    try:
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            log_config=None,
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+        server.install_signal_handlers = lambda: None  # type: ignore
+        loop.run_until_complete(server.serve())
+    except Exception as exc:
+        try:
+            err_log = BASE_DIR / ".muse" / "muse_server.log"
+            with open(err_log, "a", encoding="utf-8") as f:
+                f.write(f"[start_uvicorn error] {exc}\n")
+        except Exception:
+            pass
 
 
-def _spawn_desktop_window_on_user_screen(url: str) -> None:
+def _is_port_in_use(host: str, port: int) -> bool:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.4)
+        return s.connect_ex((host, port)) == 0
+
+
+def _is_muse_server_alive(host: str, port: int) -> bool:
+    import urllib.request
+
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://{host}:{port}/api/license/status", timeout=1.2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _pick_working_port(host: str, preferred_port: int = 18688) -> Tuple[int, bool]:
+    """
+    Trả về (port, already_running_muse).
+    Nếu cổng 18688 đã có sẵn tiến trình Muse Studio đang chạy ngầm thì dùng luôn.
+    Nếu cổng 18688 bị phần mềm khác trên máy khách chiếm giữ thì tự chuyển sang cổng kế tiếp (18689..18699).
+    """
+    if not _is_port_in_use(host, preferred_port):
+        return preferred_port, False
+    if _is_muse_server_alive(host, preferred_port):
+        return preferred_port, True
+    for p in range(preferred_port + 1, preferred_port + 15):
+        if not _is_port_in_use(host, p):
+            return p, False
+    return preferred_port, False
+
+
+def _spawn_desktop_window_on_user_screen(url: str, port: int = 18688) -> None:
     """
     Khởi chạy cửa sổ Desktop độc lập (1440x900) trên màn hình người dùng (WinSta0\\Default).
     Ưu tiên pywebview Native Window; nếu gặp xung đột tự động chuyển sang Chrome/Edge App Mode (--app=...).
     """
     from desktop_window import launch_chromium_app_window, wait_for_server
 
-    wait_for_server("127.0.0.1", 18688, timeout=15.0)
+    wait_for_server("127.0.0.1", port, timeout=25.0)
     venv_pyw = BASE_DIR / ".venv" / "Scripts" / "pythonw.exe"
     venv_py = BASE_DIR / ".venv" / "Scripts" / "python.exe"
     py_exe = (
@@ -1760,13 +1851,7 @@ def _spawn_desktop_window_on_user_screen(url: str) -> None:
 
 
 def main() -> None:
-    try:
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    _ensure_valid_stdio()
 
     from desktop_window import (
         WINDOW_HEIGHT,
@@ -1779,7 +1864,7 @@ def main() -> None:
 
     init_db()
     host = "127.0.0.1"
-    port = 18688
+    port, already_running = _pick_working_port(host, 18688)
     url = f"http://{host}:{port}"
 
     no_open = "--no-open" in sys.argv or "--server-only" in sys.argv
@@ -1787,29 +1872,34 @@ def main() -> None:
 
     if no_open:
         print(f"[Muse Studio] Server-only mode running at: {url}", flush=True)
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        if not already_running:
+            start_uvicorn(host, port)
         return
 
     if bg_desktop:
         threading.Thread(
-            target=_spawn_desktop_window_on_user_screen, args=(url,), daemon=True
+            target=_spawn_desktop_window_on_user_screen, args=(url, port), daemon=True
         ).start()
         print(
             f"[Muse Studio] Desktop App Window (1440x900) launched for: {url}",
             flush=True,
         )
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        if not already_running:
+            start_uvicorn(host, port)
         return
 
-    # Chế độ mặc định khi chạy app.py / run.bat:
-    # 1. Chạy FastAPI/Uvicorn ngầm trong daemon thread
-    server_thread = threading.Thread(
-        target=start_uvicorn, args=(host, port), daemon=True
-    )
-    server_thread.start()
-    wait_for_server(host, port, timeout=15.0)
+    # Chế độ mặc định khi chạy Muse Studio.exe / app.py / run.bat:
+    # 1. Chạy FastAPI/Uvicorn ngầm trong daemon thread (nếu chưa có tiến trình nào chạy sẵn)
+    server_thread = None
+    if not already_running:
+        server_thread = threading.Thread(
+            target=start_uvicorn, args=(host, port), daemon=True
+        )
+        server_thread.start()
+
+    ready = wait_for_server(host, port, timeout=25.0)
     print(
-        f"[Muse Studio] Đang mở cửa sổ ứng dụng Desktop độc lập ({WINDOW_WIDTH}x{WINDOW_HEIGHT})...",
+        f"[Muse Studio] Server ready={ready} at {url}. Đang mở cửa sổ ứng dụng Desktop độc lập ({WINDOW_WIDTH}x{WINDOW_HEIGHT})...",
         flush=True,
     )
 
@@ -1824,7 +1914,7 @@ def main() -> None:
     )
     launch_chromium_app_window(url, BASE_DIR, _spawn_on_default_desktop)
     try:
-        while server_thread.is_alive():
+        while server_thread and server_thread.is_alive():
             time.sleep(1.0)
     except KeyboardInterrupt:
         pass

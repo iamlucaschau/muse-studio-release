@@ -12,6 +12,7 @@ venv/
 .muse/license.key
 .muse/clock_guard.dat
 .muse/admin_issued_keys.json
+.muse/muse_server.log
 
 # OS metadata
 Thumbs.db

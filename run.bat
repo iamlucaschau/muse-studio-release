@@ -2,6 +2,8 @@
 chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
+set NO_PROXY=127.0.0.1,localhost
+set no_proxy=127.0.0.1,localhost
 cd /d "%~dp0"
 title Muse Studio - AI Media & Video (Desktop App)
 
@@ -35,6 +37,9 @@ if errorlevel 1 (
 
 echo [2/3] Dang kiem tra thu vien Desktop (pywebview / FastAPI / Playwright)...
 "%PY_CMD%" -m pip install -r requirements.txt --quiet --no-warn-script-location
+if not errorlevel 1 (
+    echo ready > ".venv\.muse_deps_ready"
+)
 
 echo [3/3] Dang mo cua so ung dung Desktop Muse Studio (1440x900)...
 "%PY_CMD%" app.py
