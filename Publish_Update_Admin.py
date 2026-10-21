@@ -41,6 +41,8 @@ def create_clean_customer_full_package(version_str: str) -> Path:
     zip_out = dist_dir / f"Muse_Studio_v{version_str}_Customer_Release.zip"
 
     include_root_files = [
+        "Muse Studio.exe",
+        "muse_studio.ico",
         "app.py",
         "desktop_window.py",
         "requirements.txt",
@@ -81,6 +83,12 @@ def run_gui():
     root.title("Muse Studio — Công Cụ Phát Hành Bản Cập Nhật OTA & Đóng Gói Gửi Khách (Admin)")
     root.geometry("800x620")
     root.configure(bg="#0b0f19")
+    ico_path = BASE_DIR / "muse_studio.ico"
+    if ico_path.exists():
+        try:
+            root.iconbitmap(str(ico_path))
+        except Exception:
+            pass
 
     var_version = tk.StringVar(value=next_ver)
     var_repo_url = tk.StringVar(value=str(info.get("update_manifest_url") or ""))

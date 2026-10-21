@@ -1,8 +1,10 @@
+import ctypes
 import os
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -10,6 +12,51 @@ from typing import Optional
 WINDOW_TITLE = "Muse Studio - AI Media & Video"
 WINDOW_WIDTH = 1440
 WINDOW_HEIGHT = 900
+BASE_DIR = Path(__file__).resolve().parent
+ICON_ICO_PATH = BASE_DIR / "muse_studio.ico"
+
+
+def _set_windows_app_id_and_icon() -> None:
+    """Đặt AppUserModelID và gán icon muse_studio.ico cho cửa sổ Windows & thanh Taskbar."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "MuseStudio.AIMediaVideo.DesktopApp.1.2"
+        )
+    except Exception:
+        pass
+
+
+def _apply_win32_window_icon_async() -> None:
+    if sys.platform != "win32" or not ICON_ICO_PATH.exists():
+        return
+
+    def _worker():
+        user32 = ctypes.windll.user32
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x00000010
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+
+        ico_str = str(ICON_ICO_PATH.resolve())
+        h_icon_small = user32.LoadImageW(None, ico_str, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+        h_icon_big = user32.LoadImageW(None, ico_str, IMAGE_ICON, 256, 256, LR_LOADFROMFILE) or user32.LoadImageW(
+            None, ico_str, IMAGE_ICON, 48, 48, LR_LOADFROMFILE
+        )
+
+        for _ in range(30):
+            hwnd = user32.FindWindowW(None, WINDOW_TITLE)
+            if hwnd:
+                if h_icon_small:
+                    user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon_small)
+                if h_icon_big:
+                    user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon_big)
+                break
+            time.sleep(0.25)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def wait_for_server(host: str, port: int, timeout: float = 15.0) -> bool:
@@ -79,7 +126,8 @@ def launch_chromium_app_window(url: str, base_dir: Path, spawn_on_desktop_fn=Non
 
 
 def run_pywebview_window(url: str) -> bool:
-    """Khởi chạy cửa sổ Desktop gốc bằng pywebview kích thước 1440x900."""
+    """Khởi chạy cửa sổ Desktop gốc bằng pywebview kích thước 1440x900 kèm Icon Muse Studio."""
+    _set_windows_app_id_and_icon()
     try:
         import webview  # type: ignore
 
@@ -92,15 +140,22 @@ def run_pywebview_window(url: str) -> bool:
             background_color="#0b0f19",
             text_select=True,
         )
-        webview.start()
+        _apply_win32_window_icon_async()
+        icon_arg = str(ICON_ICO_PATH.resolve()) if ICON_ICO_PATH.exists() else None
+        try:
+            webview.start(icon=icon_arg)
+        except TypeError:
+            webview.start()
         return True
     except Exception as exc:
-        print(f"[Muse Studio] pywebview gặp xung đột ({exc}) -> Chuyển sang chế độ Standalone App Window...", flush=True)
+        print(
+            f"[Muse Studio] pywebview gặp xung đột ({exc}) -> Chuyển sang chế độ Standalone App Window...",
+            flush=True,
+        )
         return False
 
 
 if __name__ == "__main__":
     target_url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18688"
-    root_dir = Path(__file__).resolve().parent
     if not run_pywebview_window(target_url):
-        launch_chromium_app_window(target_url, root_dir)
+        launch_chromium_app_window(target_url, BASE_DIR)

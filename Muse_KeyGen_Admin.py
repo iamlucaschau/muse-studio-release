@@ -41,6 +41,12 @@ def run_gui():
     root.geometry("820x650")
     root.configure(bg="#0b0f19")
     root.minsize(760, 600)
+    ico_path = BASE_DIR / "muse_studio.ico"
+    if ico_path.exists():
+        try:
+            root.iconbitmap(str(ico_path))
+        except Exception:
+            pass
 
     # Biến trạng thái
     var_hwid = tk.StringVar(value=get_machine_hwid())

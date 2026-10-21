@@ -329,6 +329,8 @@ def build_customer_update_zip(output_zip_path: Path) -> Tuple[int, float]:
     """
     output_zip_path.parent.mkdir(parents=True, exist_ok=True)
     include_files = [
+        "Muse Studio.exe",
+        "muse_studio.ico",
         "app.py",
         "desktop_window.py",
         "requirements.txt",
