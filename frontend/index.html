@@ -71,8 +71,12 @@
             </button>
         </nav>
 
-        <!-- Góc phải: Badge Bản quyền + Âm báo + Đang chạy: X và Hoàn thành: Y -->
+        <!-- Góc phải: Badge Cập nhật + Bản quyền + Âm báo + Đang chạy: X và Hoàn thành: Y -->
         <div class="flex items-center gap-2">
+            <button onclick="openUpdaterModal()" id="btn-header-updater" title="Kiểm tra và Cập nhật phiên bản mới tự động (OTA 1 chạm)" class="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-xs font-semibold text-sky-300 flex items-center gap-1.5 transition">
+                <i id="icon-header-updater" class="fa-solid fa-cloud-arrow-down text-sky-400"></i>
+                <span id="label-header-updater">v1.2.0 · Cập nhật</span>
+            </button>
             <button onclick="openLicenseModal(true)" id="btn-header-license" title="Xem thông tin Bản quyền &amp; Ngày hết hạn hoặc đổi License Key" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center gap-1.5 transition">
                 <i id="icon-header-license" class="fa-solid fa-key text-emerald-400"></i>
                 <span id="label-header-license">Bản quyền: Đang kiểm tra...</span>
@@ -1060,6 +1064,78 @@
                         <button onclick="submitActivateLicense()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-gray-950 font-bold shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 transition">
                             <i class="fa-solid fa-key"></i>
                             <span>Kích Hoạt Bản Quyền</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 7: KIỂM TRA & CẬP NHẬT TỰ ĐỘNG 1 CHẠM (OTA AUTO-UPDATER) -->
+    <div id="modal-app-updater" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
+        <div class="bg-musePanel border border-sky-500/40 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div class="px-5 py-3.5 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-cloud-arrow-down text-sky-400"></i>
+                    <span>Kiểm tra &amp; Cập nhật Phiên bản Mới (OTA 1 Chạm)</span>
+                </h3>
+                <button onclick="closeUpdaterModal()" class="w-7 h-7 rounded-lg bg-museInput text-gray-400 hover:text-white flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs">
+                <!-- Thông tin phiên bản hiện tại vs mới nhất -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="p-3 rounded-xl bg-museCard border border-museBorder">
+                        <span class="text-gray-400 block text-[11px]">Phiên bản đang dùng:</span>
+                        <strong id="upd-local-ver" class="text-base font-mono text-white">v1.2.0</strong>
+                        <span id="upd-local-date" class="block text-[10px] text-gray-500 mt-0.5">21/10/2026</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-museCard border border-sky-500/30">
+                        <span class="text-gray-400 block text-[11px]">Phiên bản trên Server:</span>
+                        <strong id="upd-remote-ver" class="text-base font-mono text-sky-300">Chưa kiểm tra</strong>
+                        <span id="upd-remote-date" class="block text-[10px] text-gray-500 mt-0.5">-</span>
+                    </div>
+                </div>
+
+                <!-- Trạng thái kiểm tra -->
+                <div id="upd-status-box" class="p-3 rounded-xl bg-museInput border border-museBorder text-gray-200 leading-relaxed">
+                    Bấm <b>Kiểm tra bản mới</b> để kết nối máy chủ và kiểm tra các nâng cấp mới nhất. Toàn bộ License Key, Tài khoản, Cookie và Video của bạn được giữ nguyên 100% khi cập nhật.
+                </div>
+
+                <!-- Danh sách tính năng mới (Changelog) -->
+                <div>
+                    <label class="block font-semibold text-gray-300 mb-1.5">📋 Nội dung phiên bản / Tính năng mới:</label>
+                    <ul id="upd-changelog-list" class="bg-museInput border border-museBorder rounded-xl p-3 space-y-1.5 max-h-36 overflow-y-auto text-gray-300 list-disc list-inside">
+                    </ul>
+                </div>
+
+                <!-- Cấu hình Link Nguồn Cập Nhật (GitHub Repo hoặc Server URL) -->
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-400 mb-1">
+                        🔗 Link Nguồn Cập Nhật (GitHub Repo hoặc URL <code>version.json</code>):
+                    </label>
+                    <input
+                        id="upd-source-url-input"
+                        type="text"
+                        placeholder="VD: https://github.com/ten-admin/muse-studio"
+                        class="w-full bg-museInput border border-museBorder rounded-xl px-3 py-2 text-xs font-mono text-gray-200 placeholder-gray-500 focus:outline-none focus:border-sky-400"
+                    />
+                </div>
+
+                <div class="flex items-center justify-between pt-3 border-t border-museBorder gap-2">
+                    <button onclick="checkAppUpdateNow()" id="btn-upd-check" class="px-4 py-2 rounded-xl bg-museCard hover:bg-gray-700 border border-sky-500/40 text-sky-300 font-bold flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <span>Kiểm tra bản mới</span>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <button onclick="closeUpdaterModal()" class="px-4 py-2 rounded-xl bg-museInput hover:bg-gray-800 border border-museBorder text-gray-300 font-semibold transition">
+                            Đóng
+                        </button>
+                        <button onclick="applyAppUpdateNow()" id="btn-upd-apply" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold shadow-lg shadow-sky-500/20 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-bolt"></i>
+                            <span>Cập Nhật Ngay</span>
                         </button>
                     </div>
                 </div>

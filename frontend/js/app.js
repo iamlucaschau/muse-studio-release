@@ -356,6 +356,160 @@ async function deactivateCurrentLicense() {
     showToast('Đã gỡ License Key hiện tại', 'info');
 }
 
+// ==================== OTA AUTO-UPDATER (CẬP NHẬT 1 CHẠM) ====================
+function renderChangelogItems(items) {
+    const ul = document.getElementById('upd-changelog-list');
+    if (!ul) return;
+    if (!items || items.length === 0) {
+        ul.innerHTML = `<li class="text-gray-500 italic">Không có ghi chú chi tiết.</li>`;
+        return;
+    }
+    ul.innerHTML = items.map(line => `<li>${escapeHtml(line)}</li>`).join('');
+}
+
+async function openUpdaterModal() {
+    try {
+        const res = await fetch('/api/updater/info');
+        const data = await res.json();
+        if (data && data.info) {
+            const info = data.info;
+            state.versionInfo = info;
+            const localVerEl = document.getElementById('upd-local-ver');
+            const localDateEl = document.getElementById('upd-local-date');
+            const srcInput = document.getElementById('upd-source-url-input');
+            if (localVerEl) localVerEl.textContent = `v${info.version || '1.2.0'}`;
+            if (localDateEl) localDateEl.textContent = info.released_at || '-';
+            if (srcInput && !srcInput.value && info.update_manifest_url) {
+                srcInput.value = info.update_manifest_url;
+            }
+            renderChangelogItems(info.changelog || []);
+        }
+    } catch (e) {}
+
+    const modal = document.getElementById('modal-app-updater');
+    if (modal) modal.classList.remove('hidden');
+
+    const srcVal = document.getElementById('upd-source-url-input')?.value?.trim();
+    if (srcVal) {
+        await checkAppUpdateNow();
+    }
+}
+
+function closeUpdaterModal() {
+    const modal = document.getElementById('modal-app-updater');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function checkAppUpdateNow() {
+    const srcInput = document.getElementById('upd-source-url-input');
+    const statusBox = document.getElementById('upd-status-box');
+    const remoteVerEl = document.getElementById('upd-remote-ver');
+    const remoteDateEl = document.getElementById('upd-remote-date');
+    const hdrBtn = document.getElementById('btn-header-updater');
+    const hdrLbl = document.getElementById('label-header-updater');
+
+    const source_url = srcInput ? srcInput.value.trim() : '';
+    if (statusBox) {
+        statusBox.className = 'p-3 rounded-xl bg-museInput border border-sky-500/30 text-sky-200 leading-relaxed';
+        statusBox.textContent = '⏳ Đang kết nối máy chủ kiểm tra phiên bản mới nhất...';
+    }
+
+    try {
+        const res = await fetch('/api/updater/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_url })
+        });
+        const data = await res.json();
+
+        if (!data.ok) {
+            if (statusBox) {
+                statusBox.className = 'p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 leading-relaxed';
+                statusBox.textContent = data.message || 'Không thể kiểm tra bản cập nhật.';
+            }
+            return;
+        }
+
+        if (remoteVerEl) remoteVerEl.textContent = `v${data.remote_version}`;
+        if (remoteDateEl) remoteDateEl.textContent = data.remote_released_at || 'Mới nhất';
+        if (data.remote_changelog && data.remote_changelog.length > 0) {
+            renderChangelogItems(data.remote_changelog);
+        }
+
+        if (data.has_update) {
+            if (statusBox) {
+                statusBox.className = 'p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 font-semibold leading-relaxed';
+                statusBox.textContent = data.message;
+            }
+            if (hdrBtn && hdrLbl) {
+                hdrBtn.className = 'px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-1.5 transition animate-pulse';
+                hdrLbl.textContent = `✨ Có bản mới v${data.remote_version}!`;
+            }
+            showToast(`Đã phát hiện phiên bản mới v${data.remote_version}!`, 'success');
+        } else {
+            if (statusBox) {
+                statusBox.className = 'p-3 rounded-xl bg-museInput border border-emerald-500/30 text-emerald-300 leading-relaxed';
+                statusBox.textContent = data.message;
+            }
+            showToast(`Bạn đang ở phiên bản mới nhất (v${data.local_version})`, 'info');
+        }
+    } catch (err) {
+        if (statusBox) {
+            statusBox.className = 'p-3 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-200 leading-relaxed';
+            statusBox.textContent = 'Lỗi kết nối khi kiểm tra phiên bản mới.';
+        }
+    }
+}
+
+async function applyAppUpdateNow() {
+    const srcInput = document.getElementById('upd-source-url-input');
+    const statusBox = document.getElementById('upd-status-box');
+    const applyBtn = document.getElementById('btn-upd-apply');
+    const source_url = srcInput ? srcInput.value.trim() : '';
+
+    if (!confirm('Tải và cập nhật lên phiên bản mới ngay bây giờ?\n(Toàn bộ License Key, Tài khoản, Cookie, Proxy và Video của bạn được bảo toàn 100%).')) {
+        return;
+    }
+
+    if (applyBtn) applyBtn.disabled = true;
+    if (statusBox) {
+        statusBox.className = 'p-3 rounded-xl bg-sky-500/15 border border-sky-500/40 text-sky-200 font-semibold leading-relaxed';
+        statusBox.textContent = '🚀 Đang tải gói cập nhật và nâng cấp ứng dụng... Vui lòng chờ 2–3 giây!';
+    }
+
+    try {
+        const res = await fetch('/api/updater/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_url })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+            if (statusBox) {
+                statusBox.className = 'p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-200 leading-relaxed';
+                statusBox.textContent = data.detail || data.message || 'Cập nhật thất bại!';
+            }
+            showToast(data.detail || data.message || 'Cập nhật thất bại', 'error');
+            if (applyBtn) applyBtn.disabled = false;
+            return;
+        }
+
+        if (statusBox) {
+            statusBox.className = 'p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-200 font-bold leading-relaxed';
+            statusBox.textContent = data.message || 'Cập nhật thành công! Đang tự động khởi động lại ứng dụng...';
+        }
+        showToast('Cập nhật thành công! Đang khởi động lại Muse Studio...', 'success');
+        setTimeout(() => {
+            window.location.reload();
+        }, 3200);
+    } catch (err) {
+        showToast('Đang khởi động lại phiên bản mới...', 'info');
+        setTimeout(() => {
+            window.location.reload();
+        }, 3200);
+    }
+}
+
 // ==================== TAB 1: STUDIO ====================
 async function refreshStudioState(isBackground = false) {
     try {
@@ -377,6 +531,13 @@ async function refreshStudioState(isBackground = false) {
         if (data.license) {
             state.license = data.license;
             updateLicenseUI(data.license);
+        }
+        if (data.version_info && data.version_info.version) {
+            state.versionInfo = data.version_info;
+            const hdrLbl = document.getElementById('label-header-updater');
+            if (hdrLbl && !hdrLbl.textContent.includes('Có bản mới')) {
+                hdrLbl.textContent = `v${data.version_info.version} · Cập nhật`;
+            }
         }
 
         // Cập nhật 2 Badge góc phải Header + Kiểm tra hoàn tất hàng đợi

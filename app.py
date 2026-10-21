@@ -38,6 +38,12 @@ from backend.license_manager import (
 from backend.matcher import collect_images_from_paths, match_reference_images, wrap_prompt
 from backend.orchestrator import TaskOrchestrator, test_single_proxy
 from backend.playwright_engine import PlaywrightEngine, get_account_profile_dir
+from backend.updater import (
+    check_for_updates,
+    download_and_apply_update,
+    get_local_version_info,
+    trigger_app_restart,
+)
 from backend.video_chain import stitch_video_clips
 
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -75,6 +81,7 @@ async def license_gatekeeper_middleware(request: Request, call_next):
     if (
         path.startswith("/api/")
         and not path.startswith("/api/license/")
+        and not path.startswith("/api/updater/")
         and request.method in ("POST", "PUT", "DELETE")
     ):
         lic = get_current_license_status()
@@ -97,6 +104,10 @@ async def license_gatekeeper_middleware(request: Request, call_next):
 
 class LicenseActivateReq(BaseModel):
     license_key: str
+
+
+class UpdateCheckReq(BaseModel):
+    source_url: Optional[str] = None
 
 
 class ProjectCreateReq(BaseModel):
@@ -460,7 +471,33 @@ async def api_get_state(
         "global_counts": global_counts,
         "settings": settings,
         "license": license_info,
+        "version_info": get_local_version_info(),
     }
+
+
+# -------------------- OTA AUTO-UPDATER --------------------
+
+
+@app.get("/api/updater/info")
+async def api_get_updater_info():
+    return {"ok": True, "info": get_local_version_info()}
+
+
+@app.post("/api/updater/check")
+async def api_check_for_updates(req: UpdateCheckReq):
+    res = await asyncio.to_thread(check_for_updates, req.source_url)
+    return res
+
+
+@app.post("/api/updater/apply")
+async def api_apply_update(req: UpdateCheckReq):
+    res = await asyncio.to_thread(download_and_apply_update, req.source_url)
+    if not res.get("ok"):
+        raise HTTPException(
+            status_code=400, detail=res.get("message") or "Không thể cập nhật ứng dụng"
+        )
+    trigger_app_restart(delay_sec=1.8)
+    return res
 
 
 # -------------------- LICENSE KEY MANAGEMENT --------------------

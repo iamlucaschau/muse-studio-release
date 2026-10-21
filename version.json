@@ -1,0 +1,12 @@
+{
+  "version": "1.2.0",
+  "released_at": "21/10/2026",
+  "update_manifest_url": "",
+  "download_zip_url": "",
+  "changelog": [
+    "Tích hợp khóa đồng bộ nhân vật (Character Consistency Lock) & Chuỗi Video Dài (>10s) tự ghép FFmpeg",
+    "Bổ sung chọn nhanh Proxy từ Tab Proxy ngay tại bảng Tài khoản và hộp thoại Thêm tài khoản",
+    "Chuyển sang cửa sổ phần mềm Desktop độc lập (1440x900) kèm hệ thống Bản quyền License Key theo HWID",
+    "Tích hợp hệ thống Kiểm tra & Cập nhật tự động 1 chạm (OTA Auto-Update)"
+  ]
+}
