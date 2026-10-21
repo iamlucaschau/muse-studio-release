@@ -1,11 +1,15 @@
 import asyncio
+import json
+import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 import httpx
 
-from backend.database import get_connection, get_settings
+from backend.database import DATA_DIR, get_connection, get_settings
 from backend.playwright_engine import PlaywrightEngine
+from backend.video_chain import extract_last_frame, stitch_video_clips
 
 
 class TaskOrchestrator:
@@ -262,6 +266,58 @@ class TaskOrchestrator:
                 if task_id in self._running_tasks:
                     continue
 
+                # Kiểm tra nếu task thuộc Chuỗi Video Dài (chain_group_id) và là phân cảnh nối tiếp (chain_index > 1):
+                # Chờ phân cảnh ngay trước đó (chain_index - 1) hoàn thành rồi tự động trích xuất frame cuối bằng FFmpeg
+                chain_gid = (task.get("chain_group_id") or "").strip()
+                chain_idx = int(task.get("chain_index") or 0)
+                if chain_gid and chain_idx > 1:
+                    conn_chk = get_connection()
+                    prev_row = conn_chk.execute(
+                        """
+                        SELECT id, status, output_file_path
+                        FROM tasks
+                        WHERE chain_group_id = ? AND chain_index = ?
+                        ORDER BY id DESC LIMIT 1
+                        """,
+                        (chain_gid, chain_idx - 1),
+                    ).fetchone()
+                    if prev_row and prev_row["status"] in ("pending", "running"):
+                        wait_msg = f"Chờ Cảnh #{chain_idx - 1} hoàn tất để lấy frame cuối..."
+                        if task.get("status_message") != wait_msg:
+                            conn_chk.execute(
+                                "UPDATE tasks SET status_message = ? WHERE id = ?",
+                                (wait_msg, task_id),
+                            )
+                            conn_chk.commit()
+                        conn_chk.close()
+                        continue
+                    elif prev_row and prev_row["status"] == "completed" and prev_row["output_file_path"]:
+                        frame_dir = DATA_DIR / "chain_frames"
+                        frame_dir.mkdir(parents=True, exist_ok=True)
+                        last_frame_file = frame_dir / f"{chain_gid}_clip_{chain_idx - 1}_last.png"
+                        ok_frame, frame_res = await asyncio.to_thread(
+                            extract_last_frame,
+                            str(prev_row["output_file_path"]),
+                            str(last_frame_file),
+                        )
+                        if ok_frame:
+                            cur_refs: List[str] = []
+                            try:
+                                cur_refs = json.loads(task.get("ref_images_json") or "[]")
+                            except Exception:
+                                cur_refs = []
+                            if frame_res not in cur_refs:
+                                cur_refs.append(frame_res)
+                            new_refs_json = json.dumps(cur_refs, ensure_ascii=False)
+                            task["ref_images_json"] = new_refs_json
+                            task["task_type"] = "img2vid"
+                            conn_chk.execute(
+                                "UPDATE tasks SET ref_images_json = ?, task_type = 'img2vid' WHERE id = ?",
+                                (new_refs_json, task_id),
+                            )
+                            conn_chk.commit()
+                    conn_chk.close()
+
                 is_image_task = (task.get("task_type") or "video").lower() == "image"
                 prev_failed_acc_id = (
                     int(task["assigned_account_id"])
@@ -505,6 +561,73 @@ class TaskOrchestrator:
                     "UPDATE accounts SET completed_tasks = completed_tasks + 1 WHERE id = ?",
                     (acc_id,),
                 )
+                conn.commit()
+
+                # Kiểm tra nếu task thuộc Chuỗi Video Dài (chain_group_id) và toàn bộ các phân cảnh đã hoàn tất -> Tự động ghép FFmpeg
+                chain_gid = (task.get("chain_group_id") or "").strip()
+                chain_idx = int(task.get("chain_index") or 0)
+                if chain_gid and 0 < chain_idx < 900:
+                    chain_rows = conn.execute(
+                        """
+                        SELECT id, stt, task_name, output_file_path, status, aspect_ratio, project_id, duration_sec
+                        FROM tasks
+                        WHERE chain_group_id = ? AND chain_index > 0 AND chain_index < 900
+                        ORDER BY chain_index ASC, id ASC
+                        """,
+                        (chain_gid,),
+                    ).fetchall()
+                    already_stitched = conn.execute(
+                        "SELECT id FROM tasks WHERE chain_group_id = ? AND chain_index = 999",
+                        (chain_gid,),
+                    ).fetchone()
+                    if (
+                        len(chain_rows) >= 2
+                        and not already_stitched
+                        and all(r["status"] == "completed" and r["output_file_path"] for r in chain_rows)
+                    ):
+                        clip_paths = [str(r["output_file_path"]) for r in chain_rows]
+                        first_out = Path(clip_paths[0])
+                        total_clips = len(clip_paths)
+                        est_sec = total_clips * 10
+                        stitched_name = f"{first_out.parent / f'FULL_{est_sec}s_{first_out.stem}_to_{Path(clip_paths[-1]).stem}.mp4'}"
+                        ok_stitch, stitched_path, stitched_mb = await asyncio.to_thread(
+                            stitch_video_clips, clip_paths, stitched_name
+                        )
+                        if ok_stitch:
+                            proj_id_val = int(chain_rows[0]["project_id"])
+                            max_stt_r = conn.execute(
+                                "SELECT COALESCE(MAX(stt), 0) AS m FROM tasks WHERE project_id = ?",
+                                (proj_id_val,),
+                            ).fetchone()
+                            next_stt = int(max_stt_r["m"] or 0) + 1
+                            total_dur = sum(int(r["duration_sec"] or 0) for r in chain_rows)
+                            conn.execute(
+                                """
+                                INSERT INTO tasks (
+                                    project_id, stt, task_name, prompt_text,
+                                    task_type, aspect_ratio, ref_mode, ref_images_json,
+                                    status, progress_percent, status_message,
+                                    assigned_account_id, output_file_path, file_size_mb,
+                                    duration_sec, chain_group_id, chain_index, completed_at
+                                ) VALUES (?, ?, ?, ?, 'video', ?, 'shared', '[]', 'completed', 100, ?, ?, ?, ?, ?, ?, 999, ?)
+                                """,
+                                (
+                                    proj_id_val,
+                                    next_stt,
+                                    f"🎬 VIDEO_DAI_{est_sec}s ({total_clips}_clips)",
+                                    f"[Video dài {est_sec}s ghép tự động từ {total_clips} phân cảnh 10s liền mạch] "
+                                    + (task.get("prompt_text") or ""),
+                                    chain_rows[0]["aspect_ratio"] or "16:9",
+                                    f"Đã ghép {total_clips} clip thành Video {est_sec}s!",
+                                    acc_id,
+                                    stitched_path,
+                                    stitched_mb,
+                                    total_dur,
+                                    chain_gid,
+                                    now_str,
+                                ),
+                            )
+                            conn.commit()
             else:
                 max_retries = max(0, int(settings.get("auto_retry_count", "1") or 0))
                 cur_retry = int(task.get("retry_count") or 0)

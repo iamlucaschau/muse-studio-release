@@ -402,6 +402,17 @@ function renderStudioTasksTable() {
             ? `<span class="ml-1.5 px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30 text-[10px]" title="Đính kèm ${refCount} ảnh tham chiếu (${t.ref_mode})"><i class="fa-solid fa-paperclip mr-0.5"></i>${refCount} ảnh</span>`
             : '';
 
+        const chainIdx = parseInt(t.chain_index || 0, 10);
+        let chainTag = '';
+        if (chainIdx === 999) {
+            chainTag = `<span class="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold" title="Video dài đã ghép hoàn chỉnh bằng FFmpeg"><i class="fa-solid fa-film mr-0.5"></i>Video Dài</span>`;
+        } else if (chainIdx > 0) {
+            chainTag = `<span class="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px]" title="Phân cảnh nối tiếp #${chainIdx} (Tự lấy frame cuối từ cảnh trước)"><i class="fa-solid fa-link mr-0.5"></i>Cảnh #${chainIdx}</span>`;
+        }
+        const charLockTag = (t.character_lock_text && t.character_lock_text.trim())
+            ? `<span class="ml-1 px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-[10px]" title="Khóa đồng bộ nhân vật: ${escapeHtml(t.character_lock_text)}"><i class="fa-solid fa-user-lock mr-0.5"></i>Khóa NV</span>`
+            : '';
+
         return `
             <tr data-task-id="${t.id}" class="studio-row transition ${isSelected ? 'selected' : ''}">
                 <td class="py-2.5 px-3 text-center">
@@ -409,9 +420,11 @@ function renderStudioTasksTable() {
                 </td>
                 <td class="py-2.5 px-2 text-center font-mono font-bold text-gray-400">${t.stt}</td>
                 <td class="py-2.5 px-3 max-w-xs">
-                    <div class="flex items-center">
+                    <div class="flex items-center flex-wrap gap-y-0.5">
                         <span class="font-bold text-white">${escapeHtml(t.task_name)}</span>
                         ${refTag}
+                        ${chainTag}
+                        ${charLockTag}
                     </div>
                     <p class="text-gray-400 truncate mt-0.5 cursor-pointer hover:text-indigo-300" onclick="openEditPromptModal(${t.id})" title="Bấm để sửa Prompt: ${escapeHtml(t.prompt_text)}">${escapeHtml(t.prompt_text)}</p>
                 </td>
@@ -956,6 +969,16 @@ async function submitCreateTasks(autoStart) {
         return;
     }
 
+    const charLockEl = document.getElementById('studio-char-lock-input');
+    const chainToggleEl = document.getElementById('studio-chain-mode-toggle');
+    const characterLockText = charLockEl ? charLockEl.value.trim() : '';
+    const chainMode = !!(chainToggleEl && chainToggleEl.checked);
+
+    if (chainMode && prompts.length < 2) {
+        showToast('Chế độ Chuỗi Video Dài cần ít nhất 2 dòng Prompt (hoặc bấm "Tự chia chuỗi Clip 10s" để chia tự động)!', 'warning');
+        return;
+    }
+
     // Nối hậu tố từ các Thẻ Phong cách nhanh (Style Chips) đang bật
     const activeSuffixes = STYLE_PRESET_CHIPS
         .filter(c => state.activeStyleChips.has(c.id))
@@ -975,7 +998,9 @@ async function submitCreateTasks(autoStart) {
             aspect_ratio: state.newAspectRatio,
             ref_mode: state.newRefMode,
             image_paths: state.refImages.map(x => x.path),
-            auto_start: autoStart
+            auto_start: autoStart,
+            character_lock_text: characterLockText,
+            chain_mode: chainMode
         })
     });
     const data = await res.json();
@@ -985,13 +1010,74 @@ async function submitCreateTasks(autoStart) {
     }
 
     clearPromptTextarea();
+    const chainMsg = data.chain_group_id
+        ? ` (Chuỗi Video Dài ${data.created_count * 10}s - Tự trích frame cuối & ghép FFmpeg)`
+        : '';
     showToast(
         autoStart
-            ? `Đã tạo và bắt đầu chạy ${data.created_count} tác vụ!`
-            : `Đã thêm ${data.created_count} tác vụ vào danh sách chờ.`,
+            ? `Đã tạo và bắt đầu chạy ${data.created_count} tác vụ${chainMsg}!`
+            : `Đã thêm ${data.created_count} tác vụ vào danh sách chờ${chainMsg}.`,
         'success'
     );
     await refreshStudioState();
+}
+
+function onChainModeToggleChange() {
+    const chainToggleEl = document.getElementById('studio-chain-mode-toggle');
+    if (chainToggleEl && chainToggleEl.checked) {
+        if (state.newTaskType === 'image') {
+            setTaskType('video');
+        }
+        if (state.refImages.length > 0 && state.newRefMode !== 'shared') {
+            setRefMode('shared');
+            showToast('Đã tự động chuyển Ảnh tham chiếu sang "Dùng chung" để giữ 100% nhân vật đồng bộ qua mọi clip!', 'info');
+        }
+    }
+}
+
+function autoSplitScriptIntoChainClips() {
+    const ta = document.getElementById('studio-prompt-textarea');
+    const sel = document.getElementById('chain-target-duration-select');
+    const chainToggle = document.getElementById('studio-chain-mode-toggle');
+    if (!ta) return;
+
+    const clipCount = parseInt((sel && sel.value) || '6', 10);
+    const rawLines = getPromptLinesFromTextarea();
+    if (rawLines.length === 0) {
+        showToast('Hãy nhập ý tưởng hoặc kịch bản tổng thể vào ô Prompt trước khi bấm Tự chia chuỗi Clip 10s!', 'warning');
+        ta.focus();
+        return;
+    }
+
+    // Tự động bật công tắc Chuỗi Video Dài & Dùng chung ảnh nhân vật
+    if (chainToggle && !chainToggle.checked) {
+        chainToggle.checked = true;
+        onChainModeToggleChange();
+    }
+
+    const baseIdea = rawLines.join(' — ');
+    const stageTemplates = [
+        { phase: 'Mở đầu (Establishing & Action Start)', cam: 'Wide tracking shot, nhân vật bắt đầu di chuyển vào bối cảnh, kết thúc cảnh đúng lúc đang bước đi/chuyển động' },
+        { phase: 'Triển khai hành động (Continuous Motion)', cam: 'Medium follow shot nối tiếp từ vị trí cuối cảnh trước, máy quay pan mượt theo chuyển động đang diễn ra' },
+        { phase: 'Tương tác bối cảnh (Dynamic Progression)', cam: 'Dynamic side-angle tracking shot, nhân vật tiếp tục hành động liền mạch, cắt cảnh đúng lúc đang xoay người/di chuyển' },
+        { phase: 'Cao trào chuyển động (Climax Action)', cam: 'Close-to-medium cinematic dolly shot, biểu cảm và chuyển động nhân vật liên tục, ánh sáng đồng nhất' },
+        { phase: 'Mở rộng không gian (Environment Sweep)', cam: 'Smooth crane/gimbal movement theo bước chân nhân vật, giữ nguyên trang phục và ánh sáng, cắt giữa chuyển động' },
+        { phase: 'Kết chuỗi (Resolution & Final Motion)', cam: 'Cinematic slow pull-back shot nối tiếp mượt mà từ khung hình trước, hoàn tất chuỗi hành động tự nhiên' }
+    ];
+
+    const generatedLines = [];
+    for (let i = 1; i <= clipCount; i++) {
+        const startSec = (i - 1) * 10;
+        const endSec = i * 10;
+        const tpl = stageTemplates[(i - 1) % stageTemplates.length];
+        generatedLines.push(
+            `[Cảnh ${i}/${clipCount} - ${startSec}s-${endSec}s | ${tpl.phase}] ${baseIdea} — (${tpl.cam}, chỉ sinh âm thanh môi trường ambient tự nhiên, không nhạc nền/VO rời rạc)`
+        );
+    }
+
+    ta.value = generatedLines.join('\n');
+    onPromptTextareaInput();
+    showToast(`Đã tự chia thành ${clipCount} phân cảnh 10s liền mạch (Tổng ~${clipCount * 10} giây) và bật chế độ Chuỗi Video Dài!`, 'success');
 }
 
 // ==================== CHUYỂN TIẾP 1 CHẠM: ẢNH -> VIDEO ====================
@@ -1080,6 +1166,35 @@ function toggleSelectAllGallery() {
     }
     updateGallerySelectedBadge();
     renderGalleryGrid();
+}
+
+async function batchStitchGallerySelected() {
+    const ids = Array.from(state.selectedGalleryIds);
+    if (ids.length < 2) {
+        showToast('Hãy tích chọn ít nhất 2 video clip trong Thư viện theo thứ tự muốn ghép!', 'warning');
+        return;
+    }
+    showToast(`Đang ghép nối ${ids.length} clip thành 1 Video dài bằng FFmpeg...`, 'info');
+    try {
+        const res = await fetch('/api/gallery/stitch-videos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_ids: ids })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast(`Đã ghép thành công ${data.clips_count} clip thành Video dài (~${data.estimated_duration_sec}s - ${data.file_size_mb} MB)!`, 'success');
+            await loadGallery();
+            await refreshStudioState(true);
+            if (data.task_id) {
+                openGalleryMedia(data.task_id);
+            }
+        } else {
+            showToast(data.detail || 'Không thể ghép video', 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi khi ghép video bằng FFmpeg', 'error');
+    }
 }
 
 async function batchExportGallerySelected() {

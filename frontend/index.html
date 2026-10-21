@@ -321,6 +321,63 @@
                         <div id="ref-images-chips" class="flex flex-wrap gap-1 max-h-24 overflow-y-auto empty:hidden"></div>
                     </div>
 
+                    <!-- Khối Đồng bộ Nhân vật (Character Lock) & Chuỗi Video Dài (>10s Multi-Clip Chain) -->
+                    <div class="bg-gradient-to-br from-indigo-950/35 to-violet-950/25 border border-indigo-500/30 rounded-xl p-3 space-y-2.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold text-indigo-300 uppercase flex items-center gap-1.5">
+                                <i class="fa-solid fa-user-lock text-amber-400"></i>
+                                Đồng bộ Nhân vật & Video Dài (>10s)
+                            </span>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">Muse Continuity AI</span>
+                        </div>
+
+                        <!-- 1. Khóa DNA Nhân vật cố định xuyên suốt các clip -->
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-300 mb-1">
+                                🎭 Khóa mô tả Nhân vật cố định (Mặt, Tóc, Trang phục giữ nguyên 100%):
+                            </label>
+                            <input
+                                id="studio-char-lock-input"
+                                type="text"
+                                placeholder="VD: Cô gái châu Á 22 tuổi, tóc đen dài ngang lưng, mặc áo khoác da đen..."
+                                class="w-full bg-museInput border border-museBorder rounded-lg px-2.5 py-1.5 text-[11px] text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-400"
+                            />
+                        </div>
+
+                        <!-- 2. Bật chế độ Chuỗi Video Dài nối tiếp (Last-Frame Continuity + FFmpeg Auto-Stitch) -->
+                        <label class="flex items-start gap-2 cursor-pointer select-none bg-museInput/70 p-2 rounded-lg border border-museBorder/80 hover:border-indigo-500/40 transition">
+                            <input
+                                id="studio-chain-mode-toggle"
+                                type="checkbox"
+                                onchange="onChainModeToggleChange()"
+                                class="mt-0.5 rounded bg-museInput border-gray-600 text-indigo-500 focus:ring-0"
+                            />
+                            <div class="text-[11px] leading-snug">
+                                <div class="font-semibold text-indigo-200 flex items-center gap-1">
+                                    <i class="fa-solid fa-link text-emerald-400"></i>
+                                    <span>Chuỗi Video Dài nối tiếp (Multi-Clip + Tự ghép FFmpeg)</span>
+                                </div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">
+                                    Tự lấy <b>frame cuối</b> của Clip trước làm điểm bắt đầu cho Clip sau, khóa âm thanh Ambient (không nhạc/VO rời rạc) và <b>tự động ghép thành 1 Video dài</b> khi xong.
+                                </div>
+                            </div>
+                        </label>
+
+                        <!-- 3. Công cụ tự chia 1 ý tưởng kịch bản thành N cảnh 10s liên hoàn -->
+                        <div class="flex items-center justify-between gap-1.5 pt-1 border-t border-indigo-500/20">
+                            <select id="chain-target-duration-select" class="bg-museInput border border-museBorder rounded-lg px-2 py-1 text-[11px] font-semibold text-gray-200 focus:outline-none focus:border-indigo-400">
+                                <option value="2">Thời lượng: 20 giây (2 Clip x 10s)</option>
+                                <option value="3">Thời lượng: 30 giây (3 Clip x 10s)</option>
+                                <option value="6" selected>Thời lượng: 60 giây (6 Clip x 10s)</option>
+                                <option value="12">Thời lượng: 2 phút (12 Clip x 10s)</option>
+                            </select>
+                            <button onclick="autoSplitScriptIntoChainClips()" title="Tự động chia nội dung đang nhập trong ô Prompt thành chuỗi các cảnh 10 giây nối tiếp nhau" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/40 text-[11px] font-semibold text-amber-300 flex items-center gap-1 transition whitespace-nowrap">
+                                <i class="fa-solid fa-wand-sparkles"></i>
+                                <span>Tự chia chuỗi Clip 10s</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Khối chọn Tỉ lệ: 16:9, 9:16, 1:1, 4:3, 3:4 -->
                     <div>
                         <label class="block text-[11px] font-semibold text-gray-400 uppercase mb-1.5">Tỉ lệ khung hình (Aspect Ratio)</label>
@@ -381,6 +438,10 @@
                             <span>Chọn tất cả</span>
                         </button>
                         <span id="gallery-selected-badge" class="text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">0 đã chọn</span>
+                        <button onclick="batchStitchGallerySelected()" title="Ghép các clip video đã chọn theo thứ tự thành 1 Video dài hoàn chỉnh bằng FFmpeg" class="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/40 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-film"></i>
+                            <span>Ghép thành 1 Video dài</span>
+                        </button>
                         <button onclick="batchExportGallerySelected()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center gap-1.5 transition">
                             <i class="fa-solid fa-file-export"></i>
                             <span>Copy mục chọn...</span>

@@ -164,6 +164,9 @@ def init_db() -> None:
         "ALTER TABLE proxies ADD COLUMN country_code TEXT",
         "ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN duration_sec INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN chain_group_id TEXT",
+        "ALTER TABLE tasks ADD COLUMN chain_index INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN character_lock_text TEXT",
     ):
         try:
             cur.execute(alter_sql)

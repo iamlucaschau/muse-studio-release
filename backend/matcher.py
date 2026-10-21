@@ -127,6 +127,9 @@ def wrap_prompt(
     aspect_ratio: str,
     has_ref_images: bool,
     settings: Dict[str, str],
+    character_lock_text: str = "",
+    chain_group_id: str = "",
+    chain_index: int = 0,
 ) -> str:
     """
     Bộ bọc Prompt (Prompt Template Wrapper) theo 4 mẫu cấu hình trong Cài đặt:
@@ -134,11 +137,36 @@ def wrap_prompt(
     - Image-to-Image (Có ảnh tham chiếu)
     - Text-to-Video
     - Image-to-Video (Từ ảnh sang video)
+    Kết hợp khóa Đồng bộ Nhân vật (Character Consistency Lock) & Chuỗi Video Dài (Multi-Clip Continuity).
     """
     prompt_clean = raw_prompt.strip()
     ratio = aspect_ratio.strip() if aspect_ratio else "16:9"
     count = settings.get("default_image_count", "1") or "1"
     t_type = (task_type or "video").lower().strip()
+
+    extra_directives: List[str] = []
+    char_lock = (character_lock_text or "").strip()
+    if char_lock:
+        extra_directives.append(
+            f"[CHARACTER CONSISTENCY LOCK — Keep exact facial identity, hairstyle, and outfit 100% unchanged across all clips: {char_lock}]."
+        )
+    elif has_ref_images:
+        extra_directives.append(
+            "[CHARACTER CONSISTENCY LOCK — Strictly preserve the exact facial features, hair, and outfit from the attached reference image(s)]."
+        )
+
+    if chain_group_id and t_type != "image":
+        if chain_index > 1:
+            extra_directives.append(
+                f"[SEAMLESS CONTINUATION CLIP #{chain_index}: Use the attached last-frame image from the previous clip as the exact starting frame and pose, while keeping the character identity locked. Continue the action smoothly, and cut mid-motion at the end. AUDIO: natural ambient sound effects only, strictly NO background music and NO voiceover]."
+            )
+        else:
+            extra_directives.append(
+                "[MULTI-CLIP SEQUENCE CLIP #1: End this 10s clip mid-motion (walking, turning, or camera pan — do NOT end on a static pose) for seamless stitching. AUDIO: natural ambient sound effects only, strictly NO background music and NO voiceover]."
+            )
+
+    if extra_directives:
+        prompt_clean = f"{' '.join(extra_directives)} Scene action: {prompt_clean}"
 
     if t_type == "image":
         if has_ref_images:

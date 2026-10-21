@@ -853,6 +853,9 @@ class PlaywrightEngine:
             aspect_ratio=aspect_ratio,
             has_ref_images=len(ref_images) > 0,
             settings=settings,
+            character_lock_text=task.get("character_lock_text") or "",
+            chain_group_id=task.get("chain_group_id") or "",
+            chain_index=int(task.get("chain_index") or 0),
         )
 
         offscreen = settings.get("offscreen_mode", "1") == "1"

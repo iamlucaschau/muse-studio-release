@@ -9,6 +9,7 @@ import sys
 import threading
 import webbrowser
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +33,7 @@ from backend.database import (
 from backend.matcher import collect_images_from_paths, match_reference_images, wrap_prompt
 from backend.orchestrator import TaskOrchestrator, test_single_proxy
 from backend.playwright_engine import PlaywrightEngine, get_account_profile_dir
+from backend.video_chain import stitch_video_clips
 
 FRONTEND_DIR = BASE_DIR / "frontend"
 
@@ -86,6 +88,8 @@ class CreateTasksReq(BaseModel):
     ref_mode: str = "pair"  # 'pair', 'shared', 'by_name'
     image_paths: List[str] = []
     auto_start: bool = False
+    character_lock_text: str = ""
+    chain_mode: bool = False
 
 
 class BatchTaskActionReq(BaseModel):
@@ -598,17 +602,39 @@ async def api_create_tasks(req: CreateTasksReq):
 
     created_ids: List[int] = []
     cur = conn.cursor()
+    chain_gid = (
+        f"chain_{int(datetime.now().timestamp())}"
+        if (req.chain_mode and req.task_type != "image" and len(clean_prompts) >= 2)
+        else ""
+    )
+    char_lock = (req.character_lock_text or "").strip()
+
     for idx, p_text in enumerate(clean_prompts):
         current_stt += 1
-        task_name = f"{prefix}_{current_stt:03d}"
-        ref_imgs = matched_lists[idx] if idx < len(matched_lists) else []
+        task_name = (
+            f"{prefix}_Chain_{idx + 1:02d}_{current_stt:03d}"
+            if chain_gid
+            else f"{prefix}_{current_stt:03d}"
+        )
+        # Khi chạy Chain Mode, mọi phân cảnh đều giữ danh sách ảnh nhân vật tham chiếu gốc
+        if chain_gid and req.image_paths:
+            ref_imgs = collect_images_from_paths(req.image_paths)
+        else:
+            ref_imgs = matched_lists[idx] if idx < len(matched_lists) else []
+        chain_idx = (idx + 1) if chain_gid else 0
+        init_msg = (
+            f"Chuỗi Cảnh #{chain_idx}/{len(clean_prompts)} (Chờ chạy)"
+            if chain_gid
+            else "Chờ chạy"
+        )
         cur.execute(
             """
             INSERT INTO tasks (
                 project_id, stt, task_name, prompt_text,
                 task_type, aspect_ratio, ref_mode, ref_images_json,
-                status, progress_percent, status_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 'Chờ chạy')
+                status, progress_percent, status_message,
+                chain_group_id, chain_index, character_lock_text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
             """,
             (
                 req.project_id,
@@ -619,6 +645,10 @@ async def api_create_tasks(req: CreateTasksReq):
                 req.aspect_ratio,
                 req.ref_mode,
                 json.dumps(ref_imgs, ensure_ascii=False),
+                init_msg,
+                chain_gid,
+                chain_idx,
+                char_lock,
             ),
         )
         created_ids.append(cur.lastrowid)
@@ -629,7 +659,12 @@ async def api_create_tasks(req: CreateTasksReq):
     if req.auto_start and created_ids:
         await orchestrator.start_tasks(project_id=req.project_id, task_ids=created_ids)
 
-    return {"ok": True, "created_count": len(created_ids), "task_ids": created_ids}
+    return {
+        "ok": True,
+        "created_count": len(created_ids),
+        "task_ids": created_ids,
+        "chain_group_id": chain_gid or None,
+    }
 
 
 @app.post("/api/tasks/reindex")
@@ -989,6 +1024,103 @@ async def api_batch_export_gallery(req: GalleryBatchActionReq):
         "ok": True,
         "copied_count": copied_count,
         "target_folder": str(dest_path),
+    }
+
+
+@app.post("/api/gallery/stitch-videos")
+async def api_stitch_gallery_videos(req: GalleryBatchActionReq):
+    if not req.task_ids or len(req.task_ids) < 2:
+        raise HTTPException(
+            status_code=400, detail="Cần chọn ít nhất 2 video để ghép thành 1 video dài"
+        )
+
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in req.task_ids)
+    rows = conn.execute(
+        f"SELECT id, project_id, stt, task_name, prompt_text, task_type, output_file_path, aspect_ratio FROM tasks WHERE id IN ({placeholders})",
+        req.task_ids,
+    ).fetchall()
+
+    # Keep the exact order requested in req.task_ids
+    row_by_id = {int(r["id"]): r for r in rows}
+    ordered_videos = []
+    prompts_joined = []
+    aspect_ratio = "16:9"
+    project_id = 1
+    for tid in req.task_ids:
+        r = row_by_id.get(int(tid))
+        if not r or not r["output_file_path"]:
+            continue
+        p = _resolve_media_path(r["output_file_path"])
+        if p.exists() and p.is_file() and p.suffix.lower() in (".mp4", ".webm", ".mov", ".mkv"):
+            ordered_videos.append(str(p))
+            prompts_joined.append(f"[Clip #{len(ordered_videos)}] {(r['prompt_text'] or '')[:60]}")
+            aspect_ratio = r["aspect_ratio"] or aspect_ratio
+            project_id = int(r["project_id"] or 1)
+
+    if len(ordered_videos) < 2:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chỉ tìm thấy {len(ordered_videos)} file video hợp lệ trên ổ đĩa (cần >= 2 video .mp4)",
+        )
+
+    first_parent = Path(ordered_videos[0]).parent
+    est_sec = len(ordered_videos) * 10
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stitched_out = str(first_parent / f"FULL_{est_sec}s_STITCHED_{ts}.mp4")
+
+    ok_stitch, msg_or_path, stitched_mb = await asyncio.to_thread(
+        stitch_video_clips, ordered_videos, stitched_out
+    )
+    if not ok_stitch:
+        conn.close()
+        raise HTTPException(
+            status_code=500, detail=f"Lỗi ghép video FFmpeg: {msg_or_path}"
+        )
+
+    max_stt_row = conn.execute(
+        "SELECT COALESCE(MAX(stt), 0) AS m FROM tasks WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    next_stt = int(max_stt_row["m"]) + 1
+    summary_prompt = (
+        f"[🎬 VIDEO GHÉP DÀI ~{est_sec} GIÂY ({len(ordered_videos)} CLIP)] "
+        + " ➔ ".join(prompts_joined)
+    )
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur = conn.execute(
+        """
+        INSERT INTO tasks (
+            project_id, stt, task_name, prompt_text, task_type,
+            aspect_ratio, ref_mode, ref_images_json, status,
+            progress_percent, status_message, output_file_path,
+            file_size_mb, chain_index, completed_at
+        ) VALUES (?, ?, ?, ?, 'video', ?, 'shared', '[]', 'completed', 100, ?, ?, ?, 999, ?)
+        """,
+        (
+            project_id,
+            next_stt,
+            f"🎬 VIDEO_DAI_{est_sec}s ({len(ordered_videos)}_clips)",
+            summary_prompt,
+            aspect_ratio,
+            f"Đã ghép {len(ordered_videos)} clip thành Video {est_sec}s!",
+            msg_or_path,
+            stitched_mb,
+            now_str,
+        ),
+    )
+    new_task_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    return {
+        "ok": True,
+        "task_id": new_task_id,
+        "output_path": msg_or_path,
+        "file_size_mb": stitched_mb,
+        "clips_count": len(ordered_videos),
+        "estimated_duration_sec": est_sec,
     }
 
 

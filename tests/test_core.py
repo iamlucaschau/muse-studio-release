@@ -86,6 +86,38 @@ def test_all():
         ).json()
         assert edit_res["ok"] is True
 
+    # Kiểm tra Đồng bộ nhân vật (Character Consistency Lock) & Chuỗi Video Dài (Multi-Clip Chain)
+    chain_wrapped = wrap_prompt(
+        "Nhân vật bước đi trong mưa neon",
+        "img2vid",
+        "16:9",
+        True,
+        settings,
+        character_lock_text="Cô gái châu Á 22 tuổi, áo khoác da đen",
+        chain_group_id="chain_test_1",
+        chain_index=2,
+    )
+    assert "CHARACTER CONSISTENCY LOCK" in chain_wrapped
+    assert "SEAMLESS CONTINUATION CLIP #2" in chain_wrapped
+
+    chain_res = client.post(
+        "/api/tasks/create",
+        json={
+            "project_id": proj_id,
+            "prompts": ["Cảnh 1: Mở đầu", "Cảnh 2: Tiếp nối"],
+            "task_type": "video",
+            "aspect_ratio": "16:9",
+            "ref_mode": "shared",
+            "image_paths": [],
+            "auto_start": False,
+            "character_lock_text": "Nam thám tử mặc áo măng tô xám",
+            "chain_mode": True,
+        },
+    ).json()
+    assert chain_res["ok"] is True
+    assert chain_res.get("chain_group_id") is not None
+    task_ids.extend(chain_res.get("task_ids", []))
+
     # Thêm tài khoản bulk email|pass|proxy
     acc_res = client.post(
         "/api/accounts/add",
