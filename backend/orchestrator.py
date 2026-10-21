@@ -263,11 +263,18 @@ class TaskOrchestrator:
                     continue
 
                 is_image_task = (task.get("task_type") or "video").lower() == "image"
+                prev_failed_acc_id = (
+                    int(task["assigned_account_id"])
+                    if int(task.get("retry_count") or 0) > 0
+                    and task.get("assigned_account_id")
+                    else None
+                )
                 chosen_acc = self._pick_available_account(
                     enabled_accounts,
                     is_image_task=is_image_task,
                     max_concurrent_accounts=max_concurrent_accounts,
                     schedule_mode=schedule_mode,
+                    prefer_not_account_id=prev_failed_acc_id,
                 )
                 if chosen_acc is None:
                     continue
@@ -323,6 +330,7 @@ class TaskOrchestrator:
         is_image_task: bool,
         max_concurrent_accounts: int,
         schedule_mode: str = "round_robin",
+        prefer_not_account_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         if not accounts:
             return None
@@ -335,6 +343,15 @@ class TaskOrchestrator:
             if cnt > 0:
                 active_account_ids.add(acc_id)
 
+        def _get_limit(acc_row: Dict[str, Any]) -> int:
+            raw = acc_row.get("image_threads") if is_image_task else acc_row.get("video_threads")
+            if raw is None:
+                return 5
+            try:
+                return max(0, int(raw))
+            except Exception:
+                return 5
+
         # Chế độ 1: Tuần tự theo tải (sequential) -> Ưu tiên tài khoản đã mở sẵn Chrome hoặc đang chạy chưa kịch trần luồng
         if schedule_mode == "sequential":
             candidates = []
@@ -345,13 +362,16 @@ class TaskOrchestrator:
                     and len(active_account_ids) >= max_concurrent_accounts
                 ):
                     continue
-                if is_image_task:
-                    limit = max(1, int(acc.get("image_threads") or 5))
-                    current = self._account_running_img.get(acc_id, 0)
-                else:
-                    limit = max(1, int(acc.get("video_threads") or 5))
-                    current = self._account_running_vid.get(acc_id, 0)
+                limit = _get_limit(acc)
+                if limit <= 0:
+                    continue
+                current = (
+                    self._account_running_img.get(acc_id, 0)
+                    if is_image_task
+                    else self._account_running_vid.get(acc_id, 0)
+                )
                 if current < limit:
+                    avoid_penalty = 1 if (prefer_not_account_id and acc_id == prefer_not_account_id) else 0
                     is_warm = (
                         acc_id in active_account_ids
                         or (
@@ -362,14 +382,16 @@ class TaskOrchestrator:
                     total_load = self._account_running_img.get(
                         acc_id, 0
                     ) + self._account_running_vid.get(acc_id, 0)
-                    candidates.append((0 if is_warm else 1, total_load, acc_id, acc))
+                    candidates.append((avoid_penalty, 0 if is_warm else 1, total_load, acc_id, acc))
             if candidates:
-                candidates.sort(key=lambda x: (x[0], x[1], x[2]))
-                return candidates[0][3]
+                candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+                return candidates[0][4]
             return None
 
         # Chế độ 2: Luân phiên (round_robin)
         n = len(accounts)
+        fallback_acc = None
+        fallback_next_rr = None
         for offset in range(n):
             idx = (self._rr_index + offset) % n
             acc = accounts[idx]
@@ -381,16 +403,27 @@ class TaskOrchestrator:
             ):
                 continue
 
-            if is_image_task:
-                limit = max(1, int(acc.get("image_threads") or 5))
-                current = self._account_running_img.get(acc_id, 0)
-            else:
-                limit = max(1, int(acc.get("video_threads") or 5))
-                current = self._account_running_vid.get(acc_id, 0)
+            limit = _get_limit(acc)
+            if limit <= 0:
+                continue
+            current = (
+                self._account_running_img.get(acc_id, 0)
+                if is_image_task
+                else self._account_running_vid.get(acc_id, 0)
+            )
 
             if current < limit:
+                if prefer_not_account_id and acc_id == prefer_not_account_id:
+                    if fallback_acc is None:
+                        fallback_acc = acc
+                        fallback_next_rr = (idx + 1) % n
+                    continue
                 self._rr_index = (idx + 1) % n
                 return acc
+
+        if fallback_acc is not None and fallback_next_rr is not None:
+            self._rr_index = fallback_next_rr
+            return fallback_acc
 
         return None
 
@@ -437,6 +470,7 @@ class TaskOrchestrator:
             except Exception:
                 pass
 
+        start_ts = self._task_start_times.get(task_id, time.time())
         try:
             ok, msg, out_path, size_mb = await self.pw_engine.execute_task_on_tab(
                 task=task,
@@ -450,6 +484,8 @@ class TaskOrchestrator:
 
             conn = get_connection()
             if ok:
+                duration_sec = max(1, int(time.time() - start_ts))
+                final_msg = f"{msg} ({duration_sec}s)" if f"({duration_sec}s)" not in (msg or "") else msg
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 conn.execute(
                     """
@@ -459,10 +495,11 @@ class TaskOrchestrator:
                         status_message = ?,
                         output_file_path = ?,
                         file_size_mb = ?,
+                        duration_sec = ?,
                         completed_at = ?
                     WHERE id = ?
                     """,
-                    (msg, out_path, size_mb, now_str, task_id),
+                    (final_msg, out_path, size_mb, duration_sec, now_str, task_id),
                 )
                 conn.execute(
                     "UPDATE accounts SET completed_tasks = completed_tasks + 1 WHERE id = ?",
@@ -471,14 +508,32 @@ class TaskOrchestrator:
             else:
                 max_retries = max(0, int(settings.get("auto_retry_count", "1") or 0))
                 cur_retry = int(task.get("retry_count") or 0)
+                is_region_block = "Region-block" in (msg or "")
+                other_vid_accs = 0
+                if is_region_block and not is_image_task:
+                    # Tự động tắt Luồng Video (video_threads = 0) của tài khoản bị chặn Video
+                    conn.execute(
+                        "UPDATE accounts SET video_threads = 0 WHERE id = ?",
+                        (acc_id,),
+                    )
+                    other_row = conn.execute(
+                        "SELECT COUNT(*) AS c FROM accounts WHERE is_enabled = 1 AND id != ? AND video_threads > 0",
+                        (acc_id,),
+                    ).fetchone()
+                    other_vid_accs = int(other_row["c"] or 0)
+
                 is_permanent_err = (
                     cancel_event.is_set()
-                    or "Region-block" in (msg or "")
                     or "Đã dừng" in (msg or "")
-                    or "chưa đăng nhập" in (msg or "")
+                    or (is_region_block and other_vid_accs == 0)
                 )
-                if not is_permanent_err and cur_retry < max_retries:
+                if not is_permanent_err and (cur_retry < max_retries or (is_region_block and other_vid_accs > 0)):
                     next_retry = cur_retry + 1
+                    retry_label = (
+                        "Chuyển sang tài khoản Video khác..."
+                        if is_region_block
+                        else f"Tự động thử lại ({next_retry}/{max(1, max_retries)})..."
+                    )
                     conn.execute(
                         """
                         UPDATE tasks
@@ -490,7 +545,7 @@ class TaskOrchestrator:
                         """,
                         (
                             next_retry,
-                            f"Tự động thử lại ({next_retry}/{max_retries})...",
+                            retry_label,
                             task_id,
                         ),
                     )

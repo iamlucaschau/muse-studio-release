@@ -163,6 +163,7 @@ def init_db() -> None:
     for alter_sql in (
         "ALTER TABLE proxies ADD COLUMN country_code TEXT",
         "ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN duration_sec INTEGER DEFAULT 0",
     ):
         try:
             cur.execute(alter_sql)
@@ -185,16 +186,22 @@ def init_db() -> None:
         UPDATE settings
         SET value = ?
         WHERE key = 'tpl_image_to_video'
-          AND value LIKE 'Create a video%Do not ask follow-up questions%'
-          AND value NOT LIKE '%Ignore any previous memory%'
+        AND value LIKE 'Create a video%Do not ask follow-up questions%'
+        AND value NOT LIKE '%Ignore any previous memory%'
         """,
         (DEFAULT_SETTINGS["tpl_image_to_video"],),
     )
 
-    # Reset trạng thái running_tasks về 0 và task 'running' bị treo về 'pending' khi khởi động lại app
+    # Phục hồi tác vụ đang chạy dở ('running') bị gián đoạn khi khởi động lại app (Crash/Restart Recovery)
     cur.execute("UPDATE accounts SET running_tasks = 0")
     cur.execute(
-        "UPDATE tasks SET status = 'pending', progress_percent = 0, status_message = 'Chờ chạy' WHERE status = 'running'"
+        """
+        UPDATE tasks
+        SET status = 'pending',
+            progress_percent = 0,
+            status_message = 'Chờ chạy tiếp (Phục hồi sau khởi động)'
+        WHERE status = 'running'
+        """
     )
 
     conn.commit()

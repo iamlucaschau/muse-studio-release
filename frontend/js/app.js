@@ -1,3 +1,13 @@
+// ==================== STYLE PRESET CHIPS ====================
+const STYLE_PRESET_CHIPS = [
+    { id: 'cinema4k', label: '🎥 Điện ảnh 4K', suffix: 'cinematic lighting, 4K movie frame, photorealistic, shallow depth of field' },
+    { id: 'anime', label: '🌸 Anime Ghibli', suffix: 'Studio Ghibli anime style, vibrant colors, detailed hand-drawn animation' },
+    { id: 'real8k', label: '📸 Chân thực 8K', suffix: 'ultra-realistic 8K photography, natural texture, sharp focus, DSLR' },
+    { id: 'smoothpan', label: '🎞️ Chuyển động mượt', suffix: 'smooth camera pan, fluid natural motion, cinematic slow motion' },
+    { id: 'cyberpunk', label: '✨ Cyberpunk Neon', suffix: 'cyberpunk neon aesthetic, volumetric fog, dramatic rim lighting' },
+    { id: 'golden', label: '🌅 Nắng Hoàng hôn', suffix: 'golden hour sunlight, warm cinematic glow, soft atmospheric shadows' }
+];
+
 // ==================== GLOBAL STATE ====================
 const state = {
     currentTab: 'studio',
@@ -13,11 +23,17 @@ const state = {
     newAspectRatio: '16:9',    // '16:9' | '9:16' | '1:1' | '4:3' | '3:4'
     newRefMode: 'pair',        // 'pair' | 'shared' | 'by_name'
     refImages: [],             // [{path, name, stem}]
+    activeStyleChips: new Set(),
 
     // Gallery State
     galleryTypeFilter: 'all',
     galleryItems: [],
+    selectedGalleryIds: new Set(),
     activePlayerItem: null,
+
+    // Sound & Notification
+    soundNotifyEnabled: localStorage.getItem('muse_sound_notify') !== '0',
+    _prevGlobalRunning: 0,
 
     // Accounts & Proxies
     accounts: [],
@@ -28,6 +44,8 @@ const state = {
 
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', async () => {
+    updateSoundNotifyUI();
+    renderStyleChips();
     await refreshStudioState();
     await loadSettingsIntoForm();
 
@@ -39,6 +57,92 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }, 1500);
 });
+
+function updateSoundNotifyUI() {
+    const btn = document.getElementById('btn-sound-notify');
+    const icon = document.getElementById('icon-sound-notify');
+    const label = document.getElementById('label-sound-notify');
+    if (!btn || !icon || !label) return;
+    if (state.soundNotifyEnabled) {
+        btn.className = 'px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition';
+        icon.className = 'fa-solid fa-bell text-amber-400';
+        label.textContent = 'Âm báo: Bật';
+    } else {
+        btn.className = 'px-2.5 py-1.5 rounded-lg bg-museInput border border-museBorder text-xs font-semibold text-gray-400 flex items-center gap-1.5 transition';
+        icon.className = 'fa-regular fa-bell-slash text-gray-500';
+        label.textContent = 'Âm báo: Tắt';
+    }
+}
+
+function toggleSoundNotify() {
+    state.soundNotifyEnabled = !state.soundNotifyEnabled;
+    localStorage.setItem('muse_sound_notify', state.soundNotifyEnabled ? '1' : '0');
+    updateSoundNotifyUI();
+    if (state.soundNotifyEnabled) {
+        playCompletionChime();
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(() => {});
+        }
+        showToast('Đã bật chuông báo khi hoàn thành hàng đợi!', 'success');
+    } else {
+        showToast('Đã tắt chuông báo hoàn thành', 'info');
+    }
+}
+
+function playCompletionChime() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 - E5 - G5 - C6
+        notes.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.11);
+            gain.gain.setValueAtTime(0.14, ctx.currentTime + i * 0.11);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.11 + 0.35);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime + i * 0.11);
+            osc.stop(ctx.currentTime + i * 0.11 + 0.36);
+        });
+    } catch (e) {}
+}
+
+function triggerQueueCompletionAlert(completedTotal) {
+    showToast(`🎉 Toàn bộ hàng đợi tác vụ đã hoàn thành! (Tổng xong: ${completedTotal})`, 'success');
+    if (!state.soundNotifyEnabled) return;
+    playCompletionChime();
+    try {
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Muse Studio — Hoàn tất hàng đợi!', {
+                body: `Toàn bộ tác vụ đang chạy đã hoàn thành (${completedTotal} media).`
+            });
+        }
+    } catch (e) {}
+}
+
+function renderStyleChips() {
+    const container = document.getElementById('style-chips-container');
+    if (!container) return;
+    container.innerHTML = STYLE_PRESET_CHIPS.map(chip => {
+        const active = state.activeStyleChips.has(chip.id);
+        const cls = active
+            ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm'
+            : 'bg-museInput hover:bg-gray-800 text-gray-300 border-museBorder';
+        return `<button type="button" onclick="toggleStyleChip('${chip.id}')" title="Nối hậu tố: ${escapeHtml(chip.suffix)}" class="px-2 py-1 rounded-lg border text-[11px] font-medium transition ${cls}">${chip.label}</button>`;
+    }).join('');
+}
+
+function toggleStyleChip(chipId) {
+    if (state.activeStyleChips.has(chipId)) {
+        state.activeStyleChips.delete(chipId);
+    } else {
+        state.activeStyleChips.add(chipId);
+    }
+    renderStyleChips();
+}
 
 // ==================== TOAST NOTIFICATION ====================
 function showToast(message, type = 'info') {
@@ -135,12 +239,19 @@ async function refreshStudioState(isBackground = false) {
         state.tasks = data.tasks || [];
         state.settings = data.settings || {};
 
-        // Cập nhật 2 Badge góc phải Header
-        document.getElementById('badge-global-running').textContent = data.global_counts?.running ?? 0;
-        document.getElementById('badge-global-completed').textContent = data.global_counts?.completed ?? 0;
+        // Cập nhật 2 Badge góc phải Header + Kiểm tra hoàn tất hàng đợi
+        const curRunning = data.global_counts?.running ?? 0;
+        const curCompleted = data.global_counts?.completed ?? 0;
+        const pc = data.project_counts || {};
+        if (state._prevGlobalRunning > 0 && curRunning === 0 && (pc.pending ?? 0) === 0) {
+            triggerQueueCompletionAlert(curCompleted);
+        }
+        state._prevGlobalRunning = curRunning;
+
+        document.getElementById('badge-global-running').textContent = curRunning;
+        document.getElementById('badge-global-completed').textContent = curCompleted;
 
         // Cập nhật số lượng trên bộ lọc Studio
-        const pc = data.project_counts || {};
         document.getElementById('count-filter-all').textContent = pc.all ?? 0;
         document.getElementById('count-filter-pending').textContent = pc.pending ?? 0;
         document.getElementById('count-filter-running').textContent = pc.running ?? 0;
@@ -309,6 +420,11 @@ function renderStudioTasksTable() {
                 <td class="py-2.5 px-3">${statusCell}</td>
                 <td class="py-2.5 px-3 text-right">
                     <div class="flex items-center justify-end gap-1">
+                        ${(hasOutput && t.task_type === 'image') ? `
+                        <button onclick="studioAnimateToVideo(${t.id})" title="Tạo Video chuyển động từ bức ảnh này (Ảnh → Video)" class="w-7 h-7 rounded-lg bg-violet-500/20 hover:bg-violet-500/40 text-violet-300 flex items-center justify-center transition">
+                            <i class="fa-solid fa-clapperboard text-[11px]"></i>
+                        </button>
+                        ` : ''}
                         <button onclick="openTaskMedia(${t.id})" ${hasOutput ? '' : 'disabled'} title="Phát Media (Play)" class="w-7 h-7 rounded-lg ${hasOutput ? 'bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300' : 'bg-gray-800/50 text-gray-600 cursor-not-allowed'} flex items-center justify-center transition">
                             <i class="fa-solid fa-play text-[11px]"></i>
                         </button>
@@ -834,10 +950,19 @@ function closeMatcherPreviewModal() {
 }
 
 async function submitCreateTasks(autoStart) {
-    const prompts = getPromptLinesFromTextarea();
+    let prompts = getPromptLinesFromTextarea();
     if (prompts.length === 0) {
         showToast('Vui lòng nhập ít nhất 1 dòng Prompt!', 'warning');
         return;
+    }
+
+    // Nối hậu tố từ các Thẻ Phong cách nhanh (Style Chips) đang bật
+    const activeSuffixes = STYLE_PRESET_CHIPS
+        .filter(c => state.activeStyleChips.has(c.id))
+        .map(c => c.suffix);
+    if (activeSuffixes.length > 0) {
+        const suffixStr = activeSuffixes.join(', ');
+        prompts = prompts.map(p => `${p}, ${suffixStr}`);
     }
 
     const res = await fetch('/api/tasks/create', {
@@ -869,6 +994,51 @@ async function submitCreateTasks(autoStart) {
     await refreshStudioState();
 }
 
+// ==================== CHUYỂN TIẾP 1 CHẠM: ẢNH -> VIDEO ====================
+function animateImageItemToVideo(item) {
+    if (!item || !item.output_file_path) return;
+    const fpath = item.output_file_path;
+    const parts = fpath.replace(/\\/g, '/').split('/');
+    const fname = parts[parts.length - 1] || 'image.png';
+    const stem = fname.replace(/\.[^/.]+$/, '');
+
+    closeMediaPlayerModal();
+    switchTab('studio');
+    setTaskType('img2vid');
+    setAspectRatio(item.aspect_ratio || '16:9');
+    setRefMode('shared');
+
+    state.refImages = [{ path: fpath, name: fname, stem: stem }];
+    renderRefImagesChips();
+
+    const ta = document.getElementById('studio-prompt-textarea');
+    if (ta) {
+        if (!ta.value.trim()) {
+            ta.value = item.prompt_text || 'Animate this scene with smooth cinematic camera motion and natural movement';
+        }
+        onPromptTextareaInput();
+        ta.focus();
+    }
+    showToast(`Đã nạp ảnh "${fname}" vào chế độ Ảnh → Video!`, 'success');
+}
+
+function studioAnimateToVideo(taskId) {
+    const item = state.tasks.find(t => t.id === taskId);
+    if (!item) return;
+    animateImageItemToVideo(item);
+}
+
+function galleryAnimateToVideo(taskId) {
+    const item = state.galleryItems.find(x => x.id === taskId);
+    if (!item) return;
+    animateImageItemToVideo(item);
+}
+
+function playerAnimateToVideo() {
+    if (!state.activePlayerItem) return;
+    animateImageItemToVideo(state.activePlayerItem);
+}
+
 // ==================== TAB 2: THƯ VIỆN (MEDIA GALLERY) ====================
 function setGalleryTypeFilter(type) {
     state.galleryTypeFilter = type;
@@ -883,6 +1053,85 @@ function setGalleryTypeFilter(type) {
     loadGallery();
 }
 
+function updateGallerySelectedBadge() {
+    const el = document.getElementById('gallery-selected-badge');
+    if (el) {
+        el.textContent = `${state.selectedGalleryIds.size} đã chọn`;
+    }
+}
+
+function toggleGallerySelect(taskId, ev) {
+    if (ev) ev.stopPropagation();
+    if (state.selectedGalleryIds.has(taskId)) {
+        state.selectedGalleryIds.delete(taskId);
+    } else {
+        state.selectedGalleryIds.add(taskId);
+    }
+    updateGallerySelectedBadge();
+    renderGalleryGrid();
+}
+
+function toggleSelectAllGallery() {
+    const allIds = state.galleryItems.map(x => x.id);
+    if (allIds.length > 0 && allIds.every(id => state.selectedGalleryIds.has(id))) {
+        state.selectedGalleryIds.clear();
+    } else {
+        allIds.forEach(id => state.selectedGalleryIds.add(id));
+    }
+    updateGallerySelectedBadge();
+    renderGalleryGrid();
+}
+
+async function batchExportGallerySelected() {
+    const ids = Array.from(state.selectedGalleryIds);
+    if (ids.length === 0) {
+        showToast('Hãy tích chọn ít nhất 1 media trong Thư viện để xuất ra thư mục!', 'warning');
+        return;
+    }
+    showToast('Đang mở hộp thoại chọn thư mục đích trên Windows...', 'info');
+    try {
+        const res = await fetch('/api/gallery/batch-export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_ids: ids })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast(`Đã copy ${data.copied_count} file sang: ${data.target_folder}`, 'success');
+        } else if (!data.cancelled) {
+            showToast(data.detail || data.message || 'Không thể copy file', 'warning');
+        }
+    } catch (e) {
+        showToast('Lỗi khi xuất file hàng loạt', 'error');
+    }
+}
+
+async function batchDeleteGallerySelected() {
+    const ids = Array.from(state.selectedGalleryIds);
+    if (ids.length === 0) {
+        showToast('Hãy tích chọn ít nhất 1 media trong Thư viện để xóa!', 'warning');
+        return;
+    }
+    if (!confirm(`Bạn có chắc muốn xóa ${ids.length} media đã chọn và xóa luôn file gốc trên ổ đĩa?`)) return;
+    try {
+        const res = await fetch('/api/gallery/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_ids: ids, delete_disk_file: true })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            state.selectedGalleryIds.clear();
+            updateGallerySelectedBadge();
+            showToast(`Đã xóa ${data.deleted} media khỏi Thư viện và ổ đĩa!`, 'info');
+            await loadGallery();
+            await refreshStudioState(true);
+        }
+    } catch (e) {
+        showToast('Lỗi khi xóa hàng loạt', 'error');
+    }
+}
+
 async function loadGallery() {
     const projId = document.getElementById('gallery-project-filter')?.value || '0';
     const params = new URLSearchParams({
@@ -893,8 +1142,19 @@ async function loadGallery() {
     const data = await res.json();
     state.galleryItems = data.items || [];
 
+    const validIds = new Set(state.galleryItems.map(x => x.id));
+    for (const id of Array.from(state.selectedGalleryIds)) {
+        if (!validIds.has(id)) state.selectedGalleryIds.delete(id);
+    }
+    updateGallerySelectedBadge();
+
     document.getElementById('gallery-total-count').textContent = `${state.galleryItems.length} media`;
+    renderGalleryGrid();
+}
+
+function renderGalleryGrid() {
     const grid = document.getElementById('gallery-grid-container');
+    if (!grid) return;
 
     if (state.galleryItems.length === 0) {
         grid.innerHTML = `
@@ -909,20 +1169,32 @@ async function loadGallery() {
     grid.innerHTML = state.galleryItems.map(item => {
         const streamUrl = `/api/media/stream?path=${encodeURIComponent(item.output_file_path || '')}`;
         const isImg = item.task_type === 'image';
+        const isSelected = state.selectedGalleryIds.has(item.id);
         const previewHtml = isImg
             ? `<img src="${streamUrl}" class="w-full h-44 object-cover group-hover:scale-105 transition duration-300" loading="lazy" />`
             : `<video src="${streamUrl}" muted loop onmouseover="this.play()" onmouseout="this.pause()" class="w-full h-44 object-cover"></video>`;
 
+        const durTag = item.duration_sec > 0 ? ` · ⏱ ${item.duration_sec}s` : '';
+
         return `
-            <div onclick="openGalleryItemModal(${item.id})" class="group cursor-pointer bg-museCard border border-museBorder hover:border-indigo-500/60 rounded-xl overflow-hidden shadow-lg flex flex-col transition">
+            <div onclick="openGalleryItemModal(${item.id})" class="group cursor-pointer bg-museCard border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/40' : 'border-museBorder hover:border-indigo-500/60'} rounded-xl overflow-hidden shadow-lg flex flex-col transition">
                 <div class="relative bg-black h-44 overflow-hidden">
                     ${previewHtml}
                     <span class="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/70 text-[10px] font-bold text-white uppercase">
-                        ${isImg ? 'Ảnh (IMG)' : 'Video (VIDEO)'} · ${escapeHtml(item.aspect_ratio)}
+                        ${isImg ? 'Ảnh (IMG)' : 'Video (VIDEO)'} · ${escapeHtml(item.aspect_ratio)}${durTag}
                     </span>
+                    <div onclick="toggleGallerySelect(${item.id}, event)" class="absolute top-2 right-2 w-6 h-6 rounded-md bg-black/70 hover:bg-black flex items-center justify-center border border-white/20">
+                        <input type="checkbox" ${isSelected ? 'checked' : ''} class="rounded accent-indigo-500 pointer-events-none" />
+                    </div>
                     <span class="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/70 text-[10px] font-mono text-emerald-300">
                         ${item.file_size_mb || 0} MB
                     </span>
+                    ${isImg ? `
+                    <button onclick="event.stopPropagation(); galleryAnimateToVideo(${item.id})" title="Biến bức ảnh này thành Video chuyển động (Ảnh → Video)" class="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-violet-600/90 hover:bg-violet-500 text-[10px] font-bold text-white flex items-center gap-1 shadow transition">
+                        <i class="fa-solid fa-clapperboard"></i>
+                        <span>Tạo Video</span>
+                    </button>
+                    ` : ''}
                 </div>
                 <div class="p-3 flex-1 flex flex-col justify-between space-y-2">
                     <div>
@@ -958,12 +1230,16 @@ async function loadGallery() {
 async function galleryQuickDelete(taskId) {
     if (!confirm('Xóa media này khỏi Thư viện và xóa luôn file gốc trên ổ cứng?')) return;
     try {
-        const res = await fetch(`/api/gallery/${taskId}/delete`, { method: 'POST' });
+        const res = await fetch(`/api/gallery/${taskId}/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ delete_disk_file: true })
+        });
         const data = await res.json();
         if (res.ok && data.ok) {
             showToast('Đã xóa media và file trên ổ đĩa!', 'info');
             await loadGallery();
-            await refreshStudioTasks(true);
+            await refreshStudioState(true);
         } else {
             showToast(data.detail || 'Không thể xóa media', 'error');
         }
@@ -978,12 +1254,16 @@ async function playerDeleteMedia() {
     const taskId = state.activePlayerItem.id;
     closeMediaPlayerModal();
     try {
-        const res = await fetch(`/api/gallery/${taskId}/delete`, { method: 'POST' });
+        const res = await fetch(`/api/gallery/${taskId}/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ delete_disk_file: true })
+        });
         const data = await res.json();
         if (res.ok && data.ok) {
             showToast('Đã xóa media và file trên ổ đĩa!', 'info');
             await loadGallery();
-            await refreshStudioTasks(true);
+            await refreshStudioState(true);
         } else {
             showToast(data.detail || 'Không thể xóa media', 'error');
         }
@@ -1054,6 +1334,15 @@ function openMediaPlayerModal(item) {
     document.getElementById('player-meta-ratio').textContent = item.aspect_ratio || '16:9';
     document.getElementById('player-meta-date').textContent = item.completed_at || item.created_at || '-';
     document.getElementById('player-meta-prompt').textContent = item.prompt_text || '';
+
+    const animateBtn = document.getElementById('btn-player-animate-video');
+    if (animateBtn) {
+        if (item.task_type === 'image' && item.output_file_path) {
+            animateBtn.classList.remove('hidden');
+        } else {
+            animateBtn.classList.add('hidden');
+        }
+    }
 
     const videoEl = document.getElementById('player-modal-video');
     const imgEl = document.getElementById('player-modal-image');
@@ -1162,10 +1451,10 @@ async function loadAccounts(isBackground = false) {
                     </td>
                     <td class="py-3 px-3">${proxyText}</td>
                     <td class="py-3 px-2 text-center">
-                        <input type="number" min="1" max="20" value="${acc.image_threads || 5}" onchange="updateAccountField(${acc.id}, {image_threads: parseInt(this.value, 10)})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
+                        <input type="number" min="0" max="20" title="Nhập 0 nếu không muốn tài khoản này chạy tạo Ảnh" value="${acc.image_threads ?? 5}" onchange="updateAccountField(${acc.id}, {image_threads: Math.max(0, parseInt(this.value || '0', 10))})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
                     </td>
                     <td class="py-3 px-2 text-center">
-                        <input type="number" min="1" max="20" value="${acc.video_threads || 5}" onchange="updateAccountField(${acc.id}, {video_threads: parseInt(this.value, 10)})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
+                        <input type="number" min="0" max="20" title="Nhập 0 nếu tài khoản này không tạo được Video (hệ thống sẽ tự động đẩy toàn bộ Video sang tài khoản khác)" value="${acc.video_threads ?? 5}" onchange="updateAccountField(${acc.id}, {video_threads: Math.max(0, parseInt(this.value || '0', 10))})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
                     </td>
                     <td class="py-3 px-3 text-center">
                         <span class="text-sky-300 font-medium">${escapeHtml(acc.quota_status || 'Chưa kiểm tra')}</span>

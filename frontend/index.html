@@ -71,8 +71,12 @@
             </button>
         </nav>
 
-        <!-- Góc phải: Badge hiển thị trạng thái Đang chạy: X và Hoàn thành: Y -->
-        <div class="flex items-center gap-2.5">
+        <!-- Góc phải: Badge hiển thị trạng thái Đang chạy: X và Hoàn thành: Y + Chuông thông báo -->
+        <div class="flex items-center gap-2">
+            <button onclick="toggleSoundNotify()" id="btn-sound-notify" title="Bật/tắt âm báo và thông báo khi hoàn thành toàn bộ hàng đợi" class="px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
+                <i id="icon-sound-notify" class="fa-solid fa-bell text-amber-400"></i>
+                <span id="label-sound-notify">Âm báo: Bật</span>
+            </button>
             <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs font-medium text-indigo-300">
                 <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
                 <span>Đang chạy: <strong id="badge-global-running" class="text-white font-bold">0</strong></span>
@@ -251,11 +255,21 @@
                         </div>
                         <textarea
                             id="studio-prompt-textarea"
-                            rows="7"
+                            rows="6"
                             oninput="onPromptTextareaInput()"
                             placeholder="Nhập danh sách prompt tại đây (mỗi dòng tương ứng 1 tác vụ)...&#10;VD:&#10;Cinematic drone shot over cyberpunk Tokyo at night in the rain&#10;Cho nhân vật anh_so_1 đi bộ dưới mưa cùng anh_so_2"
                             class="w-full bg-museInput border border-museBorder rounded-xl p-3 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-museAccent resize-none leading-relaxed"
                         ></textarea>
+
+                        <!-- Bộ Thẻ Phong cách nhanh (Style Chips) -->
+                        <div class="mt-2">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-[10px] font-semibold text-gray-400 uppercase">Thẻ Phong cách nhanh (Tự động nối vào cuối mỗi Prompt khi bật):</span>
+                            </div>
+                            <div id="style-chips-container" class="flex flex-wrap gap-1">
+                                <!-- Render động từ app.js -->
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Khối chọn Ảnh tham chiếu (tùy chọn): + Ảnh, + Thư mục và 3 tab chế độ Ghép cặp | Dùng chung | Theo tên prompt -->
@@ -360,8 +374,21 @@
                         </div>
                     </div>
 
-                    <div class="flex items-center gap-2">
-                        <span id="gallery-total-count" class="text-xs text-gray-400">0 media</span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span id="gallery-total-count" class="text-xs text-gray-400 mr-1">0 media</span>
+                        <button onclick="toggleSelectAllGallery()" class="px-2.5 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
+                            <i class="fa-regular fa-square-check text-indigo-400"></i>
+                            <span>Chọn tất cả</span>
+                        </button>
+                        <span id="gallery-selected-badge" class="text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">0 đã chọn</span>
+                        <button onclick="batchExportGallerySelected()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-file-export"></i>
+                            <span>Copy mục chọn...</span>
+                        </button>
+                        <button onclick="batchDeleteGallerySelected()" class="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 text-xs font-semibold text-rose-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-trash-can"></i>
+                            <span>Xóa mục chọn</span>
+                        </button>
                         <button onclick="openOutputRootFolder()" class="px-3 py-1.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs text-gray-200 flex items-center gap-1.5 transition">
                             <i class="fa-solid fa-folder-open text-amber-400"></i>
                             <span>Mở thư mục Output</span>
@@ -691,8 +718,12 @@
                         </div>
                     </div>
 
-                    <!-- 5 nút hành động: Mở file, Thư mục, Copy prompt, Dùng lại prompt, Xóa file -->
+                    <!-- Các nút hành động: Tạo Video từ ảnh này, Mở file, Thư mục, Copy prompt, Dùng lại prompt, Xóa file -->
                     <div class="grid grid-cols-2 gap-2 pt-2 border-t border-museBorder">
+                        <button id="btn-player-animate-video" onclick="playerAnimateToVideo()" class="hidden col-span-2 py-2 px-2.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow transition">
+                            <i class="fa-solid fa-clapperboard"></i>
+                            <span>Tạo Video chuyển động từ ảnh này (Ảnh → Video)</span>
+                        </button>
                         <button onclick="playerOpenFile()" class="py-2 px-2.5 rounded-lg bg-museInput hover:bg-gray-800 border border-museBorder text-xs font-semibold text-gray-200 flex items-center justify-center gap-1.5">
                             <i class="fa-solid fa-up-right-from-square text-sky-400"></i>
                             <span>Mở file</span>

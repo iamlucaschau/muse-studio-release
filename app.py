@@ -151,6 +151,12 @@ class GalleryDeleteReq(BaseModel):
     delete_disk_file: bool = True
 
 
+class GalleryBatchActionReq(BaseModel):
+    task_ids: List[int]
+    delete_disk_file: bool = True
+    target_folder: Optional[str] = None
+
+
 # ==================== HELPER DIALOGS ====================
 
 
@@ -914,6 +920,78 @@ async def api_delete_gallery_item(task_id: int, req: GalleryDeleteReq):
     return {"ok": True}
 
 
+@app.post("/api/gallery/batch-delete")
+async def api_batch_delete_gallery(req: GalleryBatchActionReq):
+    if not req.task_ids:
+        return {"ok": True, "deleted": 0}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in req.task_ids)
+    rows = conn.execute(
+        f"SELECT id, output_file_path FROM tasks WHERE id IN ({placeholders})",
+        req.task_ids,
+    ).fetchall()
+    if req.delete_disk_file:
+        for r in rows:
+            fpath = r["output_file_path"]
+            if fpath:
+                try:
+                    resolved = _resolve_media_path(fpath)
+                    if resolved.exists() and resolved.is_file():
+                        resolved.unlink()
+                except Exception:
+                    pass
+    conn.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", req.task_ids)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "deleted": len(rows)}
+
+
+@app.post("/api/gallery/batch-export")
+async def api_batch_export_gallery(req: GalleryBatchActionReq):
+    if not req.task_ids:
+        raise HTTPException(status_code=400, detail="Chưa chọn mục nào để xuất")
+
+    dest_folder = req.target_folder
+    if not dest_folder:
+        dest_folder = await asyncio.to_thread(
+            open_native_folder_dialog, "Chọn thư mục đích để Copy các Media đã chọn"
+        )
+    if not dest_folder:
+        return {"ok": False, "cancelled": True, "message": "Đã hủy chọn thư mục"}
+
+    dest_path = Path(dest_folder)
+    dest_path.mkdir(parents=True, exist_ok=True)
+
+    import shutil
+
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in req.task_ids)
+    rows = conn.execute(
+        f"SELECT id, output_file_path FROM tasks WHERE id IN ({placeholders})",
+        req.task_ids,
+    ).fetchall()
+    conn.close()
+
+    copied_count = 0
+    for r in rows:
+        fpath = r["output_file_path"]
+        if not fpath:
+            continue
+        try:
+            src = _resolve_media_path(fpath)
+            if src.exists() and src.is_file():
+                shutil.copy2(str(src), str(dest_path / src.name))
+                copied_count += 1
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "copied_count": copied_count,
+        "target_folder": str(dest_path),
+    }
+
+
 @app.post("/api/system/open-file")
 async def api_open_file(req: FileOpenReq):
     p = _resolve_media_path(req.path)
@@ -1120,12 +1198,12 @@ async def api_update_account(account_id: int, req: AccountUpdateReq):
     if req.image_threads is not None:
         cur.execute(
             "UPDATE accounts SET image_threads = ? WHERE id = ?",
-            (max(1, req.image_threads), account_id),
+            (max(0, req.image_threads), account_id),
         )
     if req.video_threads is not None:
         cur.execute(
             "UPDATE accounts SET video_threads = ? WHERE id = ?",
-            (max(1, req.video_threads), account_id),
+            (max(0, req.video_threads), account_id),
         )
     if req.proxy_id is not None:
         val = req.proxy_id if req.proxy_id > 0 else None
@@ -1413,7 +1491,11 @@ def main() -> None:
 
     no_open = "--no-open" in sys.argv or "--server-only" in sys.argv
     if not no_open:
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+        threading.Timer(
+            1.2,
+            lambda: _spawn_on_default_desktop(f"explorer.exe {url}")
+            or webbrowser.open(url),
+        ).start()
 
     print(f"[Muse Studio] Server running at: {url}")
     uvicorn.run(app, host=host, port=port, log_level="info")

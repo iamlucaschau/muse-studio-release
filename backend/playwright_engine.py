@@ -49,22 +49,175 @@ def cleanup_orphaned_profile_processes(profile_dir: Path) -> None:
     Giải phóng các tiến trình chrome.exe bị treo đang giữ khóa ProcessSingleton
     trên thư mục profile_dir (tránh lỗi Failed to create a ProcessSingleton).
     """
+    if sys.platform == "win32":
+        try:
+            prof_name = profile_dir.name
+            cmd = (
+                f"Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | "
+                f"Where-Object {{ $_.CommandLine -like '*{prof_name}*' }} | "
+                f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", cmd],
+                capture_output=True,
+                timeout=6,
+            )
+        except Exception:
+            pass
+
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+        lock_file = profile_dir / lock_name
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+            except Exception:
+                pass
+
+
+def _is_current_desktop_default() -> bool:
+    """Kiểm tra xem tiến trình Python hiện tại có đang gắn vào WinSta0\\Default hay không."""
     if sys.platform != "win32":
-        return
+        return True
     try:
-        prof_name = profile_dir.name
-        cmd = (
-            f"Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | "
-            f"Where-Object {{ $_.CommandLine -like '*{prof_name}*' }} | "
-            f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
-        )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True,
-            timeout=5,
-        )
+        import ctypes
+
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        hdesk = u32.GetThreadDesktop(k32.GetCurrentThreadId())
+        buf = ctypes.create_unicode_buffer(256)
+        if u32.GetUserObjectInformationW(hdesk, 2, buf, 512, None):
+            return buf.value.strip().lower() == "default"
     except Exception:
         pass
+    return True
+
+
+_ACTIVE_LOGIN_PROCS: Dict[int, int] = {}
+
+
+def _run_login_subprocess_on_default_desktop(account_id: int) -> Dict[str, Any]:
+    """
+    Khởi chạy tiến trình đăng nhập tương tác trực tiếp trên màn hình thật WinSta0\\Default
+    của người dùng Windows (vượt qua cô lập Desktop sandbox khi server chạy ngầm).
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.windll.kernel32
+    u32 = ctypes.windll.user32
+
+    # Nếu tài khoản này đang có tiến trình Login cũ chưa đóng, dừng tiến trình cũ trước
+    old_pid = _ACTIVE_LOGIN_PROCS.pop(account_id, None)
+    if old_pid:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(old_pid)],
+                capture_output=True,
+                timeout=4,
+            )
+            time.sleep(0.8)
+        except Exception:
+            pass
+
+    base_dir = PROFILES_DIR.parent.parent
+    result_file = PROFILES_DIR.parent / f"login_result_{account_id}.json"
+    if result_file.exists():
+        try:
+            result_file.unlink()
+        except Exception:
+            pass
+
+    try:
+        hdesk = u32.OpenDesktopW("Default", 0, False, 0x10000000)
+        if hdesk:
+            u32.SetThreadDesktop(hdesk)
+        u32.keybd_event(0x12, 0, 0, 0)
+        u32.keybd_event(0x12, 0, 2, 0)
+    except Exception:
+        pass
+
+    cmd_line = (
+        f'"{sys.executable}" -m backend.playwright_engine '
+        f'--interactive-login {account_id} "{result_file}"'
+    )
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("lpReserved", wintypes.LPWSTR),
+            ("lpDesktop", wintypes.LPWSTR),
+            ("lpTitle", wintypes.LPWSTR),
+            ("dwX", wintypes.DWORD),
+            ("dwY", wintypes.DWORD),
+            ("dwXSize", wintypes.DWORD),
+            ("dwYSize", wintypes.DWORD),
+            ("dwXCountChars", wintypes.DWORD),
+            ("dwYCountChars", wintypes.DWORD),
+            ("dwFillAttribute", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("wShowWindow", wintypes.WORD),
+            ("cbReserved2", wintypes.WORD),
+            ("lpReserved2", ctypes.c_void_p),
+            ("hStdInput", wintypes.HANDLE),
+            ("hStdOutput", wintypes.HANDLE),
+            ("hStdError", wintypes.HANDLE),
+        ]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("hProcess", wintypes.HANDLE),
+            ("hThread", wintypes.HANDLE),
+            ("dwProcessId", wintypes.DWORD),
+            ("dwThreadId", wintypes.DWORD),
+        ]
+
+    si = STARTUPINFOW()
+    si.cb = ctypes.sizeof(si)
+    si.lpDesktop = "WinSta0\\Default"
+    si.dwFlags = 1
+    si.wShowWindow = 0
+    pi = PROCESS_INFORMATION()
+    buf = ctypes.create_unicode_buffer(cmd_line)
+    cwd_buf = ctypes.create_unicode_buffer(str(base_dir))
+
+    ok = k32.CreateProcessW(
+        None,
+        buf,
+        None,
+        None,
+        False,
+        0x08000000,  # CREATE_NO_WINDOW cho python wrapper, Chrome con sẽ tự hiện GUI trên WinSta0\Default
+        None,
+        cwd_buf,
+        ctypes.byref(si),
+        ctypes.byref(pi),
+    )
+    if not ok:
+        return {
+            "ok": False,
+            "message": "Không thể khởi tạo tiến trình Login trên màn hình Windows.",
+        }
+
+    _ACTIVE_LOGIN_PROCS[account_id] = int(pi.dwProcessId)
+    try:
+        # Chờ tối đa 10 phút cho người dùng nhập OTP
+        k32.WaitForSingleObject(pi.hProcess, 610000)
+    finally:
+        _ACTIVE_LOGIN_PROCS.pop(account_id, None)
+        if pi.hProcess:
+            k32.CloseHandle(pi.hProcess)
+        if pi.hThread:
+            k32.CloseHandle(pi.hThread)
+
+    if result_file.exists():
+        try:
+            return json.loads(result_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {
+        "ok": False,
+        "message": "Cửa sổ đăng nhập đã đóng trước khi hoàn tất lưu Cookie.",
+    }
 
 
 def build_playwright_proxy(proxy_row: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
@@ -336,6 +489,13 @@ class PlaywrightEngine:
         """
         await self.close_account_session(account_id)
 
+        # Nếu server đang chạy trong Desktop cô lập (ví dụ WinSta0\exebox-...),
+        # khởi chạy tiến trình con gắn trực tiếp vào WinSta0\Default để cửa sổ Chrome hiện ngay trước mắt người dùng.
+        if sys.platform == "win32" and not _is_current_desktop_default():
+            return await asyncio.to_thread(
+                _run_login_subprocess_on_default_desktop, account_id
+            )
+
         conn = get_connection()
         acc_row = conn.execute(
             "SELECT * FROM accounts WHERE id = ?", (account_id,)
@@ -356,6 +516,7 @@ class PlaywrightEngine:
 
         profile_dir = get_account_profile_dir(account_id, account.get("profile_path"))
         await asyncio.to_thread(cleanup_orphaned_profile_processes, profile_dir)
+        await asyncio.sleep(0.5)
 
         pw = await self.get_playwright()
 
@@ -384,10 +545,25 @@ class PlaywrightEngine:
                     channel="chrome", **launch_kwargs
                 )
             except Exception:
-                context = await pw.chromium.launch_persistent_context(**launch_kwargs)
+                await asyncio.to_thread(cleanup_orphaned_profile_processes, profile_dir)
+                await asyncio.sleep(1.2)
+                try:
+                    context = await pw.chromium.launch_persistent_context(
+                        channel="chrome", **launch_kwargs
+                    )
+                except Exception:
+                    context = await pw.chromium.launch_persistent_context(**launch_kwargs)
 
             page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(MUSE_COMPOSER_URL, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.bring_to_front()
+            except Exception:
+                pass
+            try:
+                await page.goto(MUSE_COMPOSER_URL, wait_until="domcontentloaded", timeout=45000)
+            except Exception:
+                # Giữ cửa sổ Chrome mở ngay cả khi Proxy phản hồi chậm ở lần tải đầu tiên
+                pass
 
             logged_in = False
             last_valid_cookies: List[Dict[str, Any]] = []
@@ -1226,3 +1402,24 @@ class PlaywrightEngine:
                 pass
 
         return False
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 4 and sys.argv[1] == "--interactive-login":
+        acc_id_arg = int(sys.argv[2])
+        res_file_arg = Path(sys.argv[3])
+
+        async def _cli_login():
+            eng = PlaywrightEngine()
+            try:
+                res = await eng.interactive_login(acc_id_arg)
+            except Exception as exc:
+                res = {"ok": False, "message": f"Lỗi khi mở trình duyệt Login: {exc}"}
+            finally:
+                await eng.shutdown()
+            res_file_arg.parent.mkdir(parents=True, exist_ok=True)
+            res_file_arg.write_text(
+                json.dumps(res, ensure_ascii=False), encoding="utf-8"
+            )
+
+        asyncio.run(_cli_login())
