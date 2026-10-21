@@ -1520,11 +1520,61 @@ async function openOutputRootFolder() {
 }
 
 // ==================== TAB 3: TÀI KHOẢN ====================
+function formatProxyOptionLabel(p) {
+    const hostPort = (p.host && p.port) ? `${p.host}:${p.port}` : (p.raw_string || `Proxy #${p.id}`);
+    const proto = (p.protocol || 'http').toUpperCase();
+    const country = p.country_code ? ` · ${p.country_code}` : '';
+    const st = p.status === 'Live' ? ` · Live${country}` : (p.status === 'Dead' ? ' · Dead' : '');
+    const assigned = p.account_email ? ` (${p.account_email.split('@')[0]})` : '';
+    return `${hostPort} [${proto}${st}]${assigned}`;
+}
+
+function populateAddAccountProxySelects() {
+    const proxies = state.proxies || [];
+    const optionsHtml = `<option value="0">— Không dùng proxy —</option>` + proxies.map(p =>
+        `<option value="${p.id}">${escapeHtml(formatProxyOptionLabel(p))}</option>`
+    ).join('');
+
+    const singleSel = document.getElementById('new-acc-proxy-select');
+    if (singleSel) {
+        const curVal = singleSel.value || '0';
+        singleSel.innerHTML = optionsHtml;
+        if (proxies.some(p => String(p.id) === String(curVal))) {
+            singleSel.value = curVal;
+        }
+    }
+    const bulkSel = document.getElementById('new-acc-bulk-proxy-select');
+    if (bulkSel) {
+        const curBulkVal = bulkSel.value || '0';
+        bulkSel.innerHTML = optionsHtml;
+        if (proxies.some(p => String(p.id) === String(curBulkVal))) {
+            bulkSel.value = curBulkVal;
+        }
+    }
+}
+
+async function changeAccountProxy(accId, proxyIdVal) {
+    const parsedId = parseInt(proxyIdVal || '0', 10);
+    await updateAccountField(accId, { proxy_id: parsedId });
+    if (parsedId > 0) {
+        const pObj = (state.proxies || []).find(x => x.id === parsedId);
+        const pLabel = pObj ? `${pObj.host}:${pObj.port}` : `#${parsedId}`;
+        showToast(`Đã gán Proxy ${pLabel} cho tài khoản #${accId}`, 'success');
+    } else {
+        showToast(`Đã chuyển tài khoản #${accId} sang Không dùng proxy`, 'info');
+    }
+    await loadAccounts(true);
+}
+
 async function loadAccounts(isBackground = false) {
     try {
         const res = await fetch('/api/accounts');
         const data = await res.json();
         state.accounts = data.accounts || [];
+        if (Array.isArray(data.proxies)) {
+            state.proxies = data.proxies;
+            populateAddAccountProxySelects();
+        }
 
         if (!isBackground && data.thread_config) {
             document.getElementById('acc-max-concurrent').value = data.thread_config.max_concurrent_accounts;
@@ -1544,16 +1594,33 @@ async function loadAccounts(isBackground = false) {
             return;
         }
 
+        const proxiesList = state.proxies || [];
+
         tbody.innerHTML = state.accounts.map(acc => {
             const cookieBadge = acc.cookie_status === 'Cookie tốt'
-                ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold">Cookie tốt</span>`
+                ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>Cookie tốt</span>`
                 : acc.cookie_status === 'Hết hạn'
-                    ? `<span class="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[11px] font-semibold">Hết hạn</span>`
-                    : `<span class="px-2 py-0.5 rounded-full bg-gray-700/60 text-gray-300 text-[11px]">Chưa có</span>`;
+                    ? `<span class="px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[11px] font-semibold">Hết hạn</span>`
+                    : `<span class="px-2.5 py-0.5 rounded-full bg-gray-700/60 text-gray-300 text-[11px]">Chưa có</span>`;
 
-            const proxyText = acc.proxy_host
-                ? `<span class="font-mono text-amber-300">${escapeHtml(acc.proxy_host)}:${acc.proxy_port}</span>`
-                : `<span class="text-gray-500">Trực tiếp (Direct)</span>`;
+            const curProxyId = acc.proxy_id ? parseInt(acc.proxy_id, 10) : 0;
+            const proxySelectOptions = `<option value="0" ${curProxyId === 0 ? 'selected' : ''}>— Không dùng proxy —</option>` +
+                proxiesList.map(p => {
+                    const isSel = curProxyId === p.id ? 'selected' : '';
+                    const hostPort = (p.host && p.port) ? `${p.host}:${p.port}` : (p.raw_string || `Proxy #${p.id}`);
+                    const proto = (p.protocol || 'http').toUpperCase();
+                    const st = p.status === 'Live' ? ' · Live' : (p.status === 'Dead' ? ' · Dead' : '');
+                    return `<option value="${p.id}" ${isSel}>${escapeHtml(`${hostPort} (${proto}${st})`)}</option>`;
+                }).join('');
+
+            const proxyDropdownHtml = `
+                <select
+                    onchange="changeAccountProxy(${acc.id}, this.value)"
+                    class="bg-museInput border ${curProxyId > 0 ? 'border-amber-500/40 text-amber-200' : 'border-museBorder text-gray-300'} hover:border-indigo-500/50 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-emerald-400 max-w-[215px] w-full truncate cursor-pointer transition"
+                >
+                    ${proxySelectOptions}
+                </select>
+            `;
 
             return `
                 <tr class="studio-row">
@@ -1564,12 +1631,14 @@ async function loadAccounts(isBackground = false) {
                         <div class="font-bold text-white">${escapeHtml(acc.display_name || '')}</div>
                         <div class="text-gray-400 text-[11px] font-mono">${escapeHtml(acc.email)}</div>
                     </td>
-                    <td class="py-3 px-3">${proxyText}</td>
                     <td class="py-3 px-2 text-center">
                         <input type="number" min="0" max="20" title="Nhập 0 nếu không muốn tài khoản này chạy tạo Ảnh" value="${acc.image_threads ?? 5}" onchange="updateAccountField(${acc.id}, {image_threads: Math.max(0, parseInt(this.value || '0', 10))})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
                     </td>
                     <td class="py-3 px-2 text-center">
                         <input type="number" min="0" max="20" title="Nhập 0 nếu tài khoản này không tạo được Video (hệ thống sẽ tự động đẩy toàn bộ Video sang tài khoản khác)" value="${acc.video_threads ?? 5}" onchange="updateAccountField(${acc.id}, {video_threads: Math.max(0, parseInt(this.value || '0', 10))})" class="w-14 bg-museInput border border-museBorder rounded-md py-1 text-center text-white" />
+                    </td>
+                    <td class="py-3 px-3">
+                        ${proxyDropdownHtml}
                     </td>
                     <td class="py-3 px-3 text-center">
                         <span class="text-sky-300 font-medium">${escapeHtml(acc.quota_status || 'Chưa kiểm tra')}</span>
@@ -1639,7 +1708,15 @@ async function saveAccountThreadConfig() {
     showToast('Đã lưu cấu hình luồng đa tài khoản', 'success');
 }
 
-function openAddAccountModal() {
+async function openAddAccountModal() {
+    try {
+        const res = await fetch('/api/proxies');
+        const data = await res.json();
+        if (data && Array.isArray(data.proxies)) {
+            state.proxies = data.proxies;
+        }
+    } catch (e) {}
+    populateAddAccountProxySelects();
     document.getElementById('modal-add-account').classList.remove('hidden');
 }
 
@@ -1653,17 +1730,20 @@ function switchAddAccountMode(mode) {
     const bulkBtn = document.getElementById('add-acc-mode-bulk');
     const singleForm = document.getElementById('add-acc-single-form');
     const bulkForm = document.getElementById('add-acc-bulk-form');
+    const profWrap = document.getElementById('add-acc-profile-wrap');
 
     if (mode === 'single') {
-        singleBtn.className = 'py-1.5 rounded-md bg-museAccent text-white';
-        bulkBtn.className = 'py-1.5 rounded-md text-gray-400 hover:text-white';
+        singleBtn.className = 'py-2 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 transition';
+        bulkBtn.className = 'py-2 rounded-lg text-gray-400 hover:text-white transition';
         singleForm.classList.remove('hidden');
         bulkForm.classList.add('hidden');
+        if (profWrap) profWrap.classList.remove('hidden');
     } else {
-        bulkBtn.className = 'py-1.5 rounded-md bg-museAccent text-white';
-        singleBtn.className = 'py-1.5 rounded-md text-gray-400 hover:text-white';
+        bulkBtn.className = 'py-2 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 transition';
+        singleBtn.className = 'py-2 rounded-lg text-gray-400 hover:text-white transition';
         bulkForm.classList.remove('hidden');
         singleForm.classList.add('hidden');
+        if (profWrap) profWrap.classList.add('hidden');
     }
 }
 
@@ -1674,10 +1754,22 @@ async function submitAddAccount() {
     let payload = { image_threads, video_threads };
     if (state.addAccountMode === 'bulk') {
         payload.bulk_text = document.getElementById('new-acc-bulk-text').value;
+        const bulkProxyId = parseInt(document.getElementById('new-acc-bulk-proxy-select')?.value || '0', 10);
+        if (bulkProxyId > 0) {
+            payload.proxy_id = bulkProxyId;
+        }
     } else {
         payload.display_name = document.getElementById('new-acc-name').value;
         payload.email = document.getElementById('new-acc-email').value;
         payload.password = document.getElementById('new-acc-pass').value;
+        const singleProxyId = parseInt(document.getElementById('new-acc-proxy-select')?.value || '0', 10);
+        if (singleProxyId > 0) {
+            payload.proxy_id = singleProxyId;
+        }
+        const customProf = document.getElementById('new-acc-profile-path')?.value;
+        if (customProf && customProf.trim()) {
+            payload.custom_profile_path = customProf.trim();
+        }
     }
 
     const res = await fetch('/api/accounts/add', {
@@ -1695,6 +1787,15 @@ async function submitAddAccount() {
     document.getElementById('new-acc-email').value = '';
     document.getElementById('new-acc-pass').value = '';
     document.getElementById('new-acc-bulk-text').value = '';
+    if (document.getElementById('new-acc-profile-path')) {
+        document.getElementById('new-acc-profile-path').value = '';
+    }
+    if (document.getElementById('new-acc-proxy-select')) {
+        document.getElementById('new-acc-proxy-select').value = '0';
+    }
+    if (document.getElementById('new-acc-bulk-proxy-select')) {
+        document.getElementById('new-acc-bulk-proxy-select').value = '0';
+    }
     closeAddAccountModal();
     showToast(`Đã thêm ${data.added_count} tài khoản`, 'success');
     await loadAccounts();
@@ -1760,6 +1861,7 @@ async function loadProxies() {
     const res = await fetch('/api/proxies');
     const data = await res.json();
     state.proxies = data.proxies || [];
+    populateAddAccountProxySelects();
     document.getElementById('proxy-total-badge').textContent = `${state.proxies.length} Proxy`;
 
     const tbody = document.getElementById('proxies-tbody');

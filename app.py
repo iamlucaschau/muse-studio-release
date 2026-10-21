@@ -104,6 +104,7 @@ class AccountAddReq(BaseModel):
     proxy_id: Optional[int] = None
     image_threads: int = 5
     video_threads: int = 5
+    custom_profile_path: Optional[str] = None
     bulk_text: Optional[str] = None
 
 
@@ -1186,10 +1187,21 @@ async def api_get_accounts():
         dict(r)
         for r in conn.execute(
             """
-            SELECT a.*, p.raw_string AS proxy_raw, p.status AS proxy_status, p.host AS proxy_host, p.port AS proxy_port
+            SELECT a.*, p.raw_string AS proxy_raw, p.status AS proxy_status, p.host AS proxy_host, p.port AS proxy_port, p.protocol AS proxy_protocol
             FROM accounts a
             LEFT JOIN proxies p ON p.id = a.proxy_id
             ORDER BY a.id ASC
+            """
+        ).fetchall()
+    ]
+    proxies_rows = [
+        dict(r)
+        for r in conn.execute(
+            """
+            SELECT p.*, a.email AS account_email, a.display_name AS account_name
+            FROM proxies p
+            LEFT JOIN accounts a ON a.id = p.assigned_account_id
+            ORDER BY p.id ASC
             """
         ).fetchall()
     ]
@@ -1198,6 +1210,7 @@ async def api_get_accounts():
     return {
         "ok": True,
         "accounts": rows,
+        "proxies": proxies_rows,
         "thread_config": {
             "max_concurrent_accounts": int(
                 settings.get("max_concurrent_accounts", "20") or 20
@@ -1213,6 +1226,7 @@ async def api_add_accounts(req: AccountAddReq):
     conn = get_connection()
     cur = conn.cursor()
     added_ids: List[int] = []
+    default_proxy_id = req.proxy_id if (req.proxy_id and req.proxy_id > 0) else None
 
     if req.bulk_text and req.bulk_text.strip():
         # Hỗ trợ thêm hàng loạt định dạng: email|pass|proxy hoặc email|pass hoặc email
@@ -1226,24 +1240,32 @@ async def api_add_accounts(req: AccountAddReq):
             proxy_str = parts[2] if len(parts) >= 3 else ""
             display_name = email.split("@")[0]
 
-            proxy_id = None
+            proxy_id = default_proxy_id
             if proxy_str:
                 parsed = parse_proxy_string(proxy_str)
-                cur.execute(
-                    """
-                    INSERT INTO proxies (raw_string, protocol, host, port, username, password, status)
-                    VALUES (?, ?, ?, ?, ?, ?, 'Chưa kiểm tra')
-                    """,
-                    (
-                        parsed["raw_string"],
-                        parsed["protocol"],
-                        parsed["host"],
-                        parsed["port"],
-                        parsed["username"],
-                        parsed["password"],
-                    ),
-                )
-                proxy_id = cur.lastrowid
+                # Kiểm tra nếu proxy này đã tồn tại trong bảng proxies thì dùng lại luôn
+                existing_p = cur.execute(
+                    "SELECT id FROM proxies WHERE host = ? AND port = ? LIMIT 1",
+                    (parsed["host"], parsed["port"]),
+                ).fetchone()
+                if existing_p:
+                    proxy_id = int(existing_p["id"])
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO proxies (raw_string, protocol, host, port, username, password, status)
+                        VALUES (?, ?, ?, ?, ?, ?, 'Chưa kiểm tra')
+                        """,
+                        (
+                            parsed["raw_string"],
+                            parsed["protocol"],
+                            parsed["host"],
+                            parsed["port"],
+                            parsed["username"],
+                            parsed["password"],
+                        ),
+                    )
+                    proxy_id = cur.lastrowid
 
             cur.execute(
                 """
@@ -1274,11 +1296,15 @@ async def api_add_accounts(req: AccountAddReq):
                 )
             added_ids.append(acc_id)
     else:
-        email = (req.email or "").strip()
-        if not email:
+        raw_email = (req.email or "").strip()
+        raw_name = (req.display_name or "").strip()
+        if not raw_email and not raw_name:
             conn.close()
-            raise HTTPException(status_code=400, detail="Email không được để trống")
-        display_name = (req.display_name or "").strip() or email.split("@")[0]
+            raise HTTPException(
+                status_code=400, detail="Vui lòng nhập Tên hiển thị hoặc Email"
+            )
+        email = raw_email or raw_name
+        display_name = raw_name or email.split("@")[0]
         cur.execute(
             """
             INSERT INTO accounts (
@@ -1290,21 +1316,22 @@ async def api_add_accounts(req: AccountAddReq):
                 display_name,
                 email,
                 req.password or "",
-                req.proxy_id,
+                default_proxy_id,
                 req.image_threads,
                 req.video_threads,
             ),
         )
         acc_id = cur.lastrowid
-        prof_dir = get_account_profile_dir(acc_id)
+        custom_prof = (req.custom_profile_path or "").strip()
+        prof_dir = Path(custom_prof).resolve() if custom_prof else get_account_profile_dir(acc_id)
         cur.execute(
             "UPDATE accounts SET profile_path = ? WHERE id = ?",
             (str(prof_dir), acc_id),
         )
-        if req.proxy_id:
+        if default_proxy_id:
             cur.execute(
                 "UPDATE proxies SET assigned_account_id = ? WHERE id = ?",
-                (acc_id, req.proxy_id),
+                (acc_id, default_proxy_id),
             )
         added_ids.append(acc_id)
 
@@ -1337,8 +1364,14 @@ async def api_update_account(account_id: int, req: AccountUpdateReq):
             "UPDATE accounts SET video_threads = ? WHERE id = ?",
             (max(0, req.video_threads), account_id),
         )
+    proxy_changed = False
     if req.proxy_id is not None:
         val = req.proxy_id if req.proxy_id > 0 else None
+        # Gỡ liên kết proxy cũ của tài khoản này (nếu có)
+        cur.execute(
+            "UPDATE proxies SET assigned_account_id = NULL WHERE assigned_account_id = ?",
+            (account_id,),
+        )
         cur.execute(
             "UPDATE accounts SET proxy_id = ? WHERE id = ?", (val, account_id)
         )
@@ -1347,8 +1380,12 @@ async def api_update_account(account_id: int, req: AccountUpdateReq):
                 "UPDATE proxies SET assigned_account_id = ? WHERE id = ?",
                 (account_id, val),
             )
+        proxy_changed = True
     conn.commit()
     conn.close()
+    if proxy_changed:
+        # Đóng session Chrome cũ của tài khoản để lần chạy tiếp theo áp dụng ngay Proxy mới
+        await pw_engine.close_account_session(account_id)
     return {"ok": True}
 
 
