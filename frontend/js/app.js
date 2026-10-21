@@ -220,6 +220,142 @@ async function switchTab(tabName) {
     }
 }
 
+// ==================== LICENSE KEY MANAGEMENT (GATEKEEPER) ====================
+function updateLicenseUI(lic) {
+    if (!lic) return;
+    const btn = document.getElementById('btn-header-license');
+    const icon = document.getElementById('icon-header-license');
+    const lbl = document.getElementById('label-header-license');
+    const hwidInput = document.getElementById('lic-modal-hwid');
+    const statusBox = document.getElementById('lic-modal-status-box');
+    const statusTitle = document.getElementById('lic-modal-status-title');
+    const statusMsg = document.getElementById('lic-modal-status-msg');
+    const closeBtn = document.getElementById('lic-modal-close-btn');
+    const cancelBtn = document.getElementById('lic-modal-cancel-btn');
+    const deactBtn = document.getElementById('lic-modal-deactivate-btn');
+
+    if (hwidInput && lic.hwid) {
+        hwidInput.value = lic.hwid;
+    }
+
+    if (lic.is_valid) {
+        const isExpiringSoon = (lic.days_remaining || 0) <= 3;
+        if (btn && icon && lbl) {
+            if (isExpiringSoon) {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition';
+                icon.className = 'fa-solid fa-triangle-exclamation text-amber-400';
+            } else {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center gap-1.5 transition';
+                icon.className = 'fa-solid fa-key text-emerald-400';
+            }
+            const daysText = lic.days_remaining > 3650 ? 'Vĩnh viễn' : `Còn ${lic.days_remaining} ngày (${lic.expires_at})`;
+            lbl.textContent = `Bản quyền: ${lic.customer || 'Active'} · ${daysText}`;
+        }
+
+        if (statusBox && statusTitle && statusMsg) {
+            statusBox.className = 'p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 space-y-1';
+            statusTitle.innerHTML = `✅ Bản quyền đang hoạt động (${escapeHtml(lic.customer || 'Khách hàng')})`;
+            statusMsg.innerHTML = `Thiết bị: <b class="font-mono">${escapeHtml(lic.hwid)}</b> · Ngày hết hạn: <b>${escapeHtml(lic.expires_at)}</b> (Còn <b>${lic.days_remaining}</b> ngày sử dụng).`;
+        }
+        if (closeBtn) closeBtn.classList.remove('hidden');
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+        if (deactBtn) deactBtn.classList.remove('hidden');
+    } else {
+        if (btn && icon && lbl) {
+            btn.className = 'px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-xs font-bold text-rose-300 flex items-center gap-1.5 transition animate-pulse';
+            icon.className = 'fa-solid fa-lock text-rose-400';
+            lbl.textContent = lic.status_code === 'expired' ? 'Bản quyền: ĐÃ HẾT HẠN' : 'Chưa kích hoạt Key';
+        }
+        if (statusBox && statusTitle && statusMsg) {
+            statusBox.className = 'p-3.5 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-200 space-y-1';
+            statusTitle.textContent = lic.status_code === 'expired'
+                ? '⚠️ License Key đã hết hạn sử dụng!'
+                : '🔒 Yêu cầu Kích hoạt License Key Bản quyền';
+            statusMsg.textContent = lic.message || 'Vui lòng gửi Mã Thiết Bị (HWID) bên dưới cho Admin để được cấp License Key.';
+        }
+        if (closeBtn) closeBtn.classList.add('hidden');
+        if (cancelBtn) cancelBtn.classList.add('hidden');
+        if (deactBtn) deactBtn.classList.add('hidden');
+
+        // Tự động bật màn hình khóa Bản quyền nếu chưa mở
+        const modal = document.getElementById('modal-license-gate');
+        if (modal && modal.classList.contains('hidden')) {
+            modal.classList.remove('hidden');
+        }
+    }
+}
+
+async function openLicenseModal(manualOpen = false) {
+    try {
+        const res = await fetch('/api/license/status');
+        const data = await res.json();
+        if (data && data.license) {
+            state.license = data.license;
+            updateLicenseUI(data.license);
+        }
+    } catch (e) {}
+    const modal = document.getElementById('modal-license-gate');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeLicenseModal() {
+    if (state.license && !state.license.is_valid) {
+        showToast('Vui lòng nhập License Key hợp lệ để mở khóa ứng dụng!', 'warning');
+        return;
+    }
+    const modal = document.getElementById('modal-license-gate');
+    if (modal) modal.classList.add('hidden');
+}
+
+function copyMachineHwid() {
+    const hwidEl = document.getElementById('lic-modal-hwid');
+    const hwid = hwidEl ? hwidEl.value.trim() : (state.license?.hwid || '');
+    if (!hwid) return;
+    navigator.clipboard.writeText(hwid);
+    showToast(`Đã sao chép Mã Máy (HWID): ${hwid}`, 'success');
+}
+
+async function submitActivateLicense() {
+    const keyInput = document.getElementById('lic-modal-key-input');
+    const license_key = keyInput ? keyInput.value.trim() : '';
+    if (!license_key) {
+        showToast('Vui lòng dán mã MUSEKEY-... vào ô nhập!', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/license/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ license_key })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast(data.detail || 'License Key không hợp lệ!', 'error');
+            return;
+        }
+        state.license = data.license;
+        updateLicenseUI(data.license);
+        if (keyInput) keyInput.value = '';
+        showToast(data.message || 'Kích hoạt bản quyền thành công!', 'success');
+        closeLicenseModal();
+        await refreshStudioState();
+    } catch (err) {
+        showToast('Lỗi kết nối khi kích hoạt bản quyền', 'error');
+    }
+}
+
+async function deactivateCurrentLicense() {
+    if (!confirm('Bạn có chắc muốn gỡ License Key hiện tại khỏi máy này?')) return;
+    const res = await fetch('/api/license/deactivate', { method: 'POST' });
+    const data = await res.json();
+    if (data && data.license) {
+        state.license = data.license;
+        updateLicenseUI(data.license);
+    }
+    showToast('Đã gỡ License Key hiện tại', 'info');
+}
+
 // ==================== TAB 1: STUDIO ====================
 async function refreshStudioState(isBackground = false) {
     try {
@@ -238,6 +374,10 @@ async function refreshStudioState(isBackground = false) {
         state.activeProjectId = data.active_project_id;
         state.tasks = data.tasks || [];
         state.settings = data.settings || {};
+        if (data.license) {
+            state.license = data.license;
+            updateLicenseUI(data.license);
+        }
 
         // Cập nhật 2 Badge góc phải Header + Kiểm tra hoàn tất hàng đợi
         const curRunning = data.global_counts?.running ?? 0;

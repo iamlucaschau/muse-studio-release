@@ -55,10 +55,39 @@ def test_all():
     assert [Path(p).name for p in byname_res[1]] == ["anh_so_2.jpg"]
     assert byname_res[2] == []
 
-    # 3. Kiểm tra API Endpoints
+    # 3. Kiểm tra hệ thống Bản quyền (License Key + HWID + Expiration)
+    from backend.license_manager import (
+        activate_license_key,
+        generate_license_key,
+        get_machine_hwid,
+        verify_license_key,
+    )
+
+    my_hwid = get_machine_hwid()
+    assert my_hwid.startswith("MUSE-")
+
+    # Kiểm tra chặn Key khác mã máy (HWID Mismatch)
+    other_key = generate_license_key("MUSE-1111-2222-3333", "2099-12-31", "Khách Khác", 30)
+    mismatch_res = verify_license_key(other_key, current_hwid=my_hwid)
+    assert mismatch_res["is_valid"] is False
+    assert mismatch_res["status_code"] == "hwid_mismatch"
+
+    # Kiểm tra chặn Key hết hạn (Expired)
+    exp_key = generate_license_key(my_hwid, "2020-01-01", "Khách Hết Hạn", 7)
+    exp_res = verify_license_key(exp_key, current_hwid=my_hwid)
+    assert exp_res["is_valid"] is False
+    assert exp_res["status_code"] == "expired"
+
+    # Kích hoạt Key Admin Vĩnh viễn cho máy hiện tại
+    admin_key = generate_license_key(my_hwid, "2099-12-31", "Admin Master", 9999)
+    act_res = activate_license_key(admin_key)
+    assert act_res["is_valid"] is True
+
+    # 4. Kiểm tra API Endpoints
     client = TestClient(app)
     st = client.get("/api/state").json()
     assert "projects" in st and len(st["projects"]) >= 1
+    assert st.get("license", {}).get("is_valid") is True
     proj_id = st["active_project_id"]
 
     # Tạo task mới

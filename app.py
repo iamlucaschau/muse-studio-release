@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,11 @@ from backend.database import (
     init_db,
     parse_proxy_string,
     update_settings,
+)
+from backend.license_manager import (
+    activate_license_key,
+    clear_saved_license_key,
+    get_current_license_status,
 )
 from backend.matcher import collect_images_from_paths, match_reference_images, wrap_prompt
 from backend.orchestrator import TaskOrchestrator, test_single_proxy
@@ -63,7 +68,35 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def license_gatekeeper_middleware(request: Request, call_next):
+    path = request.url.path
+    # Bảo vệ toàn bộ các API thực thi (POST/PUT/DELETE) nếu chưa kích hoạt hoặc hết hạn License Key
+    if (
+        path.startswith("/api/")
+        and not path.startswith("/api/license/")
+        and request.method in ("POST", "PUT", "DELETE")
+    ):
+        lic = get_current_license_status()
+        if not lic.get("is_valid"):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "ok": False,
+                    "license_error": True,
+                    "detail": lic.get("message")
+                    or "Vui lòng kích hoạt License Key hợp lệ để sử dụng tính năng này!",
+                    "license": lic,
+                },
+            )
+    return await call_next(request)
+
+
 # ==================== PYDANTIC MODELS ====================
+
+
+class LicenseActivateReq(BaseModel):
+    license_key: str
 
 
 class ProjectCreateReq(BaseModel):
@@ -417,6 +450,7 @@ async def api_get_state(
     conn.close()
     global_counts = orchestrator.get_active_counts()
     settings = get_settings()
+    license_info = get_current_license_status()
 
     return {
         "projects": projects,
@@ -425,7 +459,30 @@ async def api_get_state(
         "project_counts": proj_counts,
         "global_counts": global_counts,
         "settings": settings,
+        "license": license_info,
     }
+
+
+# -------------------- LICENSE KEY MANAGEMENT --------------------
+
+
+@app.get("/api/license/status")
+async def api_get_license_status():
+    return {"ok": True, "license": get_current_license_status()}
+
+
+@app.post("/api/license/activate")
+async def api_activate_license(req: LicenseActivateReq):
+    res = activate_license_key(req.license_key)
+    if not res["is_valid"]:
+        raise HTTPException(status_code=400, detail=res["message"])
+    return {"ok": True, "message": res["message"], "license": res}
+
+
+@app.post("/api/license/deactivate")
+async def api_deactivate_license():
+    clear_saved_license_key()
+    return {"ok": True, "license": get_current_license_status()}
 
 
 # -------------------- PROJECTS --------------------

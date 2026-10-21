@@ -71,8 +71,12 @@
             </button>
         </nav>
 
-        <!-- Góc phải: Badge hiển thị trạng thái Đang chạy: X và Hoàn thành: Y + Chuông thông báo -->
+        <!-- Góc phải: Badge Bản quyền + Âm báo + Đang chạy: X và Hoàn thành: Y -->
         <div class="flex items-center gap-2">
+            <button onclick="openLicenseModal(true)" id="btn-header-license" title="Xem thông tin Bản quyền &amp; Ngày hết hạn hoặc đổi License Key" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center gap-1.5 transition">
+                <i id="icon-header-license" class="fa-solid fa-key text-emerald-400"></i>
+                <span id="label-header-license">Bản quyền: Đang kiểm tra...</span>
+            </button>
             <button onclick="toggleSoundNotify()" id="btn-sound-notify" title="Bật/tắt âm báo và thông báo khi hoàn thành toàn bộ hàng đợi" class="px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
                 <i id="icon-sound-notify" class="fa-solid fa-bell text-amber-400"></i>
                 <span id="label-sound-notify">Âm báo: Bật</span>
@@ -982,6 +986,82 @@
                         <i class="fa-solid fa-play"></i>
                         <span>Lưu &amp; Chạy lại</span>
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 6: QUẢN LÝ & KÍCH HOẠT LICENSE KEY BẢN QUYỀN (GATEKEEPER) -->
+    <div id="modal-license-gate" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+        <div class="bg-musePanel border border-indigo-500/40 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div class="px-5 py-3.5 border-b border-museBorder bg-museCard flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+                    <span>Kích hoạt &amp; Quản lý Bản Quyền Muse Studio</span>
+                </h3>
+                <button id="lic-modal-close-btn" onclick="closeLicenseModal()" class="hidden w-7 h-7 rounded-lg bg-museInput text-gray-400 hover:text-white flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs">
+                <!-- Trạng thái Bản quyền hiện tại -->
+                <div id="lic-modal-status-box" class="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-200 space-y-1">
+                    <div class="font-bold text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-lock"></i>
+                        <span id="lic-modal-status-title">Chưa kích hoạt bản quyền</span>
+                    </div>
+                    <p id="lic-modal-status-msg" class="text-[11px] leading-relaxed text-gray-200">
+                        Vui lòng sao chép Mã Thiết Bị (HWID) bên dưới và gửi cho Admin để được cấp License Key theo số ngày sử dụng.
+                    </p>
+                </div>
+
+                <!-- 1. Mã Thiết Bị (HWID) của máy này -->
+                <div>
+                    <label class="block font-semibold text-gray-300 mb-1.5">
+                        1. Mã Thiết Bị Của Máy Này (HWID — Gửi mã này cho Admin để lấy Key):
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <input
+                            id="lic-modal-hwid"
+                            type="text"
+                            readonly
+                            value="MUSE-....-....-...."
+                            class="selectable flex-1 bg-museInput border border-indigo-500/40 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-amber-300 tracking-wider focus:outline-none"
+                        />
+                        <button onclick="copyMachineHwid()" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1.5 shadow transition whitespace-nowrap">
+                            <i class="fa-solid fa-copy"></i>
+                            <span>Copy Mã Máy</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. Nhập License Key -->
+                <div>
+                    <label class="block font-semibold text-gray-300 mb-1.5">
+                        2. Nhập License Key được cấp (Định dạng <code>MUSEKEY-...</code>):
+                    </label>
+                    <textarea
+                        id="lic-modal-key-input"
+                        rows="3"
+                        placeholder="Dán chuỗi MUSEKEY-... được Admin cấp vào đây..."
+                        class="w-full bg-museInput border border-museBorder rounded-xl p-3 text-xs font-mono text-emerald-300 placeholder-gray-500 focus:outline-none focus:border-emerald-400 resize-none"
+                    ></textarea>
+                </div>
+
+                <div class="flex items-center justify-between pt-3 border-t border-museBorder gap-2">
+                    <button id="lic-modal-deactivate-btn" onclick="deactivateCurrentLicense()" class="hidden px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-semibold transition">
+                        <i class="fa-solid fa-trash-can mr-1"></i>Gỡ Key hiện tại
+                    </button>
+                    <div class="flex items-center gap-2 ml-auto">
+                        <button id="lic-modal-cancel-btn" onclick="closeLicenseModal()" class="hidden px-4 py-2 rounded-xl bg-museInput hover:bg-gray-800 border border-museBorder text-gray-300 font-semibold transition">
+                            Đóng
+                        </button>
+                        <button onclick="submitActivateLicense()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-gray-950 font-bold shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-key"></i>
+                            <span>Kích Hoạt Bản Quyền</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

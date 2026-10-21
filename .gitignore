@@ -9,6 +9,9 @@ venv/
 .muse/profiles/
 .muse/ref_uploads/
 .muse/desktop_app_shell/
+.muse/license.key
+.muse/clock_guard.dat
+.muse/admin_issued_keys.json
 
 # OS metadata
 Thumbs.db
