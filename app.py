@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import threading
-import webbrowser
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1644,6 +1644,27 @@ def start_uvicorn(host: str, port: int) -> None:
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
+def _spawn_desktop_window_on_user_screen(url: str) -> None:
+    """
+    Khởi chạy cửa sổ Desktop độc lập (1440x900) trên màn hình người dùng (WinSta0\\Default).
+    Ưu tiên pywebview Native Window; nếu gặp xung đột tự động chuyển sang Chrome/Edge App Mode (--app=...).
+    """
+    from desktop_window import launch_chromium_app_window, wait_for_server
+
+    wait_for_server("127.0.0.1", 18688, timeout=15.0)
+    venv_pyw = BASE_DIR / ".venv" / "Scripts" / "pythonw.exe"
+    venv_py = BASE_DIR / ".venv" / "Scripts" / "python.exe"
+    py_exe = (
+        str(venv_pyw)
+        if venv_pyw.exists()
+        else (str(venv_py) if venv_py.exists() else sys.executable)
+    )
+    script_path = str((BASE_DIR / "desktop_window.py").resolve())
+    cmd_line = subprocess.list2cmdline([py_exe, script_path, url])
+    if not _spawn_on_default_desktop(cmd_line, show_window=1):
+        launch_chromium_app_window(url, BASE_DIR, _spawn_on_default_desktop)
+
+
 def main() -> None:
     try:
         if hasattr(sys.stdout, "reconfigure"):
@@ -1653,21 +1674,66 @@ def main() -> None:
     except Exception:
         pass
 
+    from desktop_window import (
+        WINDOW_HEIGHT,
+        WINDOW_TITLE,
+        WINDOW_WIDTH,
+        launch_chromium_app_window,
+        run_pywebview_window,
+        wait_for_server,
+    )
+
     init_db()
     host = "127.0.0.1"
     port = 18688
     url = f"http://{host}:{port}"
 
     no_open = "--no-open" in sys.argv or "--server-only" in sys.argv
-    if not no_open:
-        threading.Timer(
-            1.2,
-            lambda: _spawn_on_default_desktop(f"explorer.exe {url}")
-            or webbrowser.open(url),
-        ).start()
+    bg_desktop = "--bg-desktop" in sys.argv
 
-    print(f"[Muse Studio] Server running at: {url}")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    if no_open:
+        print(f"[Muse Studio] Server-only mode running at: {url}", flush=True)
+        uvicorn.run(app, host=host, port=port, log_level="info")
+        return
+
+    if bg_desktop:
+        threading.Thread(
+            target=_spawn_desktop_window_on_user_screen, args=(url,), daemon=True
+        ).start()
+        print(
+            f"[Muse Studio] Desktop App Window (1440x900) launched for: {url}",
+            flush=True,
+        )
+        uvicorn.run(app, host=host, port=port, log_level="info")
+        return
+
+    # Chế độ mặc định khi chạy app.py / run.bat:
+    # 1. Chạy FastAPI/Uvicorn ngầm trong daemon thread
+    server_thread = threading.Thread(
+        target=start_uvicorn, args=(host, port), daemon=True
+    )
+    server_thread.start()
+    wait_for_server(host, port, timeout=15.0)
+    print(
+        f"[Muse Studio] Đang mở cửa sổ ứng dụng Desktop độc lập ({WINDOW_WIDTH}x{WINDOW_HEIGHT})...",
+        flush=True,
+    )
+
+    # 2. Mở cửa sổ Desktop gốc bằng pywebview (1440x900)
+    if run_pywebview_window(url):
+        return
+
+    # 3. Fallback tự động sang cửa sổ Chrome/Edge App Mode độc lập (--app=... --window-size=1440,900)
+    print(
+        f"[Muse Studio] Đang mở cửa sổ Desktop App Mode độc lập ({WINDOW_WIDTH}x{WINDOW_HEIGHT})...",
+        flush=True,
+    )
+    launch_chromium_app_window(url, BASE_DIR, _spawn_on_default_desktop)
+    try:
+        while server_thread.is_alive():
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

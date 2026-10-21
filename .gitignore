@@ -8,6 +8,7 @@ venv/
 # Persistent Chrome browser profiles & cache (large binary data)
 .muse/profiles/
 .muse/ref_uploads/
+.muse/desktop_app_shell/
 
 # OS metadata
 Thumbs.db
