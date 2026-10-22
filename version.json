@@ -1,13 +1,13 @@
 {
-  "version": "1.2.0",
-  "released_at": "21/10/2026",
+  "version": "1.2.1",
+  "released_at": "22/10/2026 15:10",
   "update_manifest_url": "",
   "download_zip_url": "",
   "changelog": [
-    "Tích hợp khóa đồng bộ nhân vật (Character Consistency Lock) & Chuỗi Video Dài (>10s) tự ghép FFmpeg",
-    "Bổ sung chọn nhanh Proxy từ Tab Proxy ngay tại bảng Tài khoản và hộp thoại Thêm tài khoản",
-    "Chuyển sang cửa sổ phần mềm Desktop độc lập (1440x900) kèm hệ thống Bản quyền License Key theo HWID",
-    "Tích hợp hệ thống Kiểm tra & Cập nhật tự động 1 chạm (OTA Auto-Update)"
+    "Khắc phục triệt để lỗi quá thời gian chờ ở Clip #3 khi tạo Chuỗi Video Dài 30s–60s",
+    "Tự động cắt lát kịch bản theo đúng mốc thời gian từng Clip 10s & tự động phục hồi (Auto-Recovery) khi Muse từ chối ảnh frame",
+    "Tích hợp khóa đồng bộ nhân vật (Character Consistency Lock) & tự ghép FFmpeg",
+    "Bổ sung tính năng Thu hồi / Khóa License Key từ xa và quản lý Proxy"
   ],
   "revoked_keys": [
     "8E7831F1CDF27789AA67",

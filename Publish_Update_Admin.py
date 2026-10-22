@@ -220,23 +220,55 @@ def run_gui():
 
         if push_git:
             try:
-                subprocess.run(["git", "add", "version.json", "dist_update/muse_update.zip"], cwd=str(BASE_DIR), check=False)
+                # Nếu ô số 2 là link GitHub Repo, tự động gắn vào git remote 'origin' để Admin không cần gõ lệnh Git thủ công
+                m_gh = re.match(
+                    r"^(https?://github\.com/[^/]+/[^/]+?)(?:\.git)?/?$",
+                    repo_url.strip(),
+                    re.IGNORECASE,
+                )
+                if m_gh:
+                    clean_git_url = m_gh.group(1) + ".git"
+                    rem_chk = subprocess.run(
+                        ["git", "remote"],
+                        cwd=str(BASE_DIR),
+                        capture_output=True,
+                        text=True,
+                    )
+                    remotes = (rem_chk.stdout or "").splitlines()
+                    if "origin" in [r.strip() for r in remotes]:
+                        subprocess.run(
+                            ["git", "remote", "set-url", "origin", clean_git_url],
+                            cwd=str(BASE_DIR),
+                            check=False,
+                        )
+                    else:
+                        subprocess.run(
+                            ["git", "remote", "add", "origin", clean_git_url],
+                            cwd=str(BASE_DIR),
+                            check=False,
+                        )
+
+                subprocess.run(
+                    ["git", "add", "version.json", "dist_update/muse_update.zip"],
+                    cwd=str(BASE_DIR),
+                    check=False,
+                )
                 subprocess.run(
                     ["git", "commit", "-m", f"release: Publish OTA update v{ver}"],
                     cwd=str(BASE_DIR),
                     check=False,
                 )
                 push_res = subprocess.run(
-                    ["git", "push"],
+                    ["git", "push", "-u", "origin", "master"],
                     cwd=str(BASE_DIR),
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=45,
                 )
                 if push_res.returncode == 0:
                     msg += "\n✅ Đã đẩy (git push) lên GitHub thành công! Tất cả máy khách hàng đã có thể bấm 'Cập nhật ngay'."
                 else:
-                    msg += f"\n⚠️ Đã lưu tại máy (Chưa git push được vì chưa gắn remote GitHub: {push_res.stderr.strip()[:120]})"
+                    msg += f"\n⚠️ Đã đóng gói tại máy. Chi tiết git push: {(push_res.stderr or push_res.stdout or '').strip()[:180]}"
             except Exception as exc:
                 msg += f"\n⚠️ Lỗi khi chạy git push: {exc}"
 
