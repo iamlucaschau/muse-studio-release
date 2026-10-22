@@ -1,8 +1,8 @@
 {
-  "version": "1.2.1",
-  "released_at": "22/10/2026 15:10",
-  "update_manifest_url": "",
-  "download_zip_url": "",
+  "version": "1.2.2",
+  "released_at": "22/10/2026 15:19",
+  "update_manifest_url": "https://github.com/iamlucaschau/muse-studio-release",
+  "download_zip_url": "https://raw.githubusercontent.com/iamlucaschau/muse-studio-release/master/dist_update/muse_update.zip",
   "changelog": [
     "Khắc phục triệt để lỗi quá thời gian chờ ở Clip #3 khi tạo Chuỗi Video Dài 30s–60s",
     "Tự động cắt lát kịch bản theo đúng mốc thời gian từng Clip 10s & tự động phục hồi (Auto-Recovery) khi Muse từ chối ảnh frame",
