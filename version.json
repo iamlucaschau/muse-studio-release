@@ -9,5 +9,8 @@
     "Chuyển sang cửa sổ phần mềm Desktop độc lập (1440x900) kèm hệ thống Bản quyền License Key theo HWID",
     "Tích hợp hệ thống Kiểm tra & Cập nhật tự động 1 chạm (OTA Auto-Update)"
   ],
-  "revoked_keys": []
+  "revoked_keys": [
+    "8E7831F1CDF27789AA67",
+    "FD5EE5970079DFC626FA"
+  ]
 }

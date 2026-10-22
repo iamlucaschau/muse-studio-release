@@ -301,13 +301,9 @@ class TaskOrchestrator:
                             str(last_frame_file),
                         )
                         if ok_frame:
-                            cur_refs: List[str] = []
-                            try:
-                                cur_refs = json.loads(task.get("ref_images_json") or "[]")
-                            except Exception:
-                                cur_refs = []
-                            if frame_res not in cur_refs:
-                                cur_refs.append(frame_res)
+                            # Với các phân cảnh nối tiếp (Clip #2, #3...), chỉ đính kèm duy nhất ảnh frame cuối của Clip ngay trước đó
+                            # để công cụ Image-to-Video của Muse lấy đúng 1 khung hình xuất phát, tránh xung đột giữa ảnh gốc 0s và ảnh 20s
+                            cur_refs = [frame_res]
                             new_refs_json = json.dumps(cur_refs, ensure_ascii=False)
                             task["ref_images_json"] = new_refs_json
                             task["task_type"] = "img2vid"

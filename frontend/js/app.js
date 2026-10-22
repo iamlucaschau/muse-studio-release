@@ -1336,6 +1336,65 @@ function onChainModeToggleChange() {
     }
 }
 
+function sliceScriptForClipWindow(rawParts, clipIdx, clipDuration = 10) {
+    const winStart = (clipIdx - 1) * clipDuration;
+    const winEnd = clipIdx * clipDuration;
+    const timeHeaderRe = /(?:^|\b)(?:#+\s*|\*\*\s*)?(?<!\/)(\d{1,3})\s*(?:–|—|-|to)\s*(\d{1,3})\s*(?:seconds?|secs?)\b/i;
+    const majorSectionRe = /^(?:#+\s*\d+\.|#+\s*[A-Z]|\*\*(?:CAMERA|PHYSICS|AUDIO|NATURAL|REALISTIC|FINAL|SCENE|ENVIRONMENT|NEGATIVE)|Negative\s+Prompt|\([A-Z][a-z]+\s+)/i;
+    const globalSummaryRe = /^(?:#+\s*[78]\.\s*(?:CRITICAL\s+MOTION|FINAL\s+QUALITY)|\*\*FINAL\s+OBJECTIVE|\*\*Camera\s+geography)/i;
+    const resumeSectionRe = /^(?:#+\s*[23456]\.|Negative\s+Prompt|\([A-Z][a-z]+\s+)/i;
+
+    const hasAnyTimeBlock = rawParts.some(p => timeHeaderRe.test(p));
+    let filtered = [];
+    if (hasAnyTimeBlock) {
+        let inTimeBlock = false;
+        let keepCurrent = true;
+        let inSkippedSummary = false;
+        for (const p of rawParts) {
+            const s = p.trim();
+            if (!s) continue;
+            if (clipIdx >= 2 && globalSummaryRe.test(s)) {
+                inSkippedSummary = true;
+                inTimeBlock = false;
+                continue;
+            }
+            if (inSkippedSummary) {
+                if (timeHeaderRe.test(s) || resumeSectionRe.test(s)) {
+                    inSkippedSummary = false;
+                } else {
+                    continue;
+                }
+            }
+            const m = s.match(timeHeaderRe);
+            if (m) {
+                const t0 = parseInt(m[1], 10);
+                const t1 = parseInt(m[2], 10);
+                if (t1 > t0 && t1 <= 180) {
+                    inTimeBlock = true;
+                    keepCurrent = (t0 < winEnd) && (t1 > winStart);
+                    if (keepCurrent) filtered.push(s);
+                    continue;
+                }
+            }
+            if (inTimeBlock && majorSectionRe.test(s)) {
+                inTimeBlock = false;
+                keepCurrent = true;
+            }
+            if (!inTimeBlock || keepCurrent) {
+                filtered.push(s);
+            }
+        }
+    } else {
+        filtered = rawParts.map(p => p.trim()).filter(Boolean);
+    }
+
+    let joined = filtered.join(' — ');
+    joined = joined.replace(/\bCreate\s+a\s+\d{2,3}-second\b/gi, `Create a 10-second (segment ${winStart}s-${winEnd}s)`);
+    joined = joined.replace(/\bCOMPLETE\s+\d{2,3}-SECOND\s+ACTION\s+SEQUENCE\b/gi, `ACTION SEQUENCE FOR SEGMENT ${winStart}s–${winEnd}s`);
+    joined = joined.replace(/\b(?:animal\s+injuries|injuries|blood|gore|violent|violence)\s*,?\s*/gi, '');
+    return joined;
+}
+
 function autoSplitScriptIntoChainClips() {
     const ta = document.getElementById('studio-prompt-textarea');
     const sel = document.getElementById('chain-target-duration-select');
@@ -1356,7 +1415,6 @@ function autoSplitScriptIntoChainClips() {
         onChainModeToggleChange();
     }
 
-    const baseIdea = rawLines.join(' — ');
     const stageTemplates = [
         { phase: 'Mở đầu (Establishing & Action Start)', cam: 'Wide tracking shot, nhân vật bắt đầu di chuyển vào bối cảnh, kết thúc cảnh đúng lúc đang bước đi/chuyển động' },
         { phase: 'Triển khai hành động (Continuous Motion)', cam: 'Medium follow shot nối tiếp từ vị trí cuối cảnh trước, máy quay pan mượt theo chuyển động đang diễn ra' },
@@ -1371,14 +1429,15 @@ function autoSplitScriptIntoChainClips() {
         const startSec = (i - 1) * 10;
         const endSec = i * 10;
         const tpl = stageTemplates[(i - 1) % stageTemplates.length];
+        const slicedIdea = sliceScriptForClipWindow(rawLines, i, 10);
         generatedLines.push(
-            `[Cảnh ${i}/${clipCount} - ${startSec}s-${endSec}s | ${tpl.phase}] ${baseIdea} — (${tpl.cam}, chỉ sinh âm thanh môi trường ambient tự nhiên, không nhạc nền/VO rời rạc)`
+            `[Cảnh ${i}/${clipCount} - ${startSec}s-${endSec}s | ${tpl.phase}] ${slicedIdea} — (${tpl.cam}, chỉ sinh âm thanh môi trường ambient tự nhiên, không nhạc nền/VO rời rạc)`
         );
     }
 
     ta.value = generatedLines.join('\n');
     onPromptTextareaInput();
-    showToast(`Đã tự chia thành ${clipCount} phân cảnh 10s liền mạch (Tổng ~${clipCount * 10} giây) và bật chế độ Chuỗi Video Dài!`, 'success');
+    showToast(`Đã tự chia thành ${clipCount} phân cảnh 10s theo đúng mốc thời gian (Tổng ~${clipCount * 10} giây) và bật chế độ Chuỗi Video Dài!`, 'success');
 }
 
 // ==================== CHUYỂN TIẾP 1 CHẠM: ẢNH -> VIDEO ====================

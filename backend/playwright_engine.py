@@ -948,25 +948,30 @@ class PlaywrightEngine:
                 pre_side_urls = await self._snapshot_existing_media_urls(page)
                 initial_media_urls.update(pre_side_urls)
 
-                # Chờ nút New side chat xuất hiện, click và xác nhận đã vào Side chat (có nút Back to main chat)
-                for _ in range(10):
+                # Chờ nút New side chat xuất hiện (mở qua menu 'Open chat and side chats' nếu cần) và xác nhận đã vào Side chat
+                for _ in range(8):
                     try:
                         back_btn = page.locator("button[aria-label='Back to main chat']").first
                         if await back_btn.count() > 0 and await back_btn.is_visible():
                             break
                         new_side_btn = page.locator(
-                            "button[aria-label='New side chat'], button[title='New side chat']"
+                            "button[aria-label='New side chat'], button[title='New side chat'], button:has-text('New side chat')"
                         ).first
-                        if await new_side_btn.count() > 0:
+                        if await new_side_btn.count() == 0 or not await new_side_btn.is_visible():
+                            chats_menu_btn = page.locator(
+                                "button[aria-label='Open chat and side chats'], button:has-text('Chats')"
+                            ).first
+                            if await chats_menu_btn.count() > 0 and await chats_menu_btn.is_visible():
+                                await chats_menu_btn.click(timeout=2500)
+                                await asyncio.sleep(0.9)
+                        new_side_btn = page.locator(
+                            "button[aria-label='New side chat'], button[title='New side chat'], button:has-text('New side chat')"
+                        ).first
+                        if await new_side_btn.count() > 0 and await new_side_btn.is_visible():
                             try:
-                                await new_side_btn.click(force=True, timeout=2500)
+                                await new_side_btn.click(timeout=2500)
                             except Exception:
-                                await page.evaluate(
-                                    """() => {
-                                        const btn = document.querySelector("button[aria-label='New side chat'], button[title='New side chat']");
-                                        if (btn) btn.click();
-                                    }"""
-                                )
+                                await new_side_btn.click(force=True, timeout=2500)
                             await asyncio.sleep(1.2)
                             new_comp = await self._detect_composer(page)
                             if new_comp is not None:
@@ -1072,6 +1077,8 @@ class PlaywrightEngine:
             start_wait = time.time()
             media_downloaded = False
             saw_generating_state = False
+            fallback_attempts = 0
+            last_fallback_ts = 0.0
 
             while (time.time() - start_wait) < timeout_sec:
                 if cancel_event.is_set():
@@ -1107,6 +1114,50 @@ class PlaywrightEngine:
                         else:
                             # Nếu URL này trùng nội dung với file của tác vụ trước đó, đưa vào danh sách bỏ qua
                             initial_media_urls.add(dom_url)
+
+                # Tự động phục hồi (Auto-Recovery) ngay lập tức nếu Muse từ chối ảnh frame đính kèm ở Clip 3 và hỏi phương án thay thế
+                if (
+                    elapsed >= 12
+                    and not gen_status.get("is_generating")
+                    and gen_status.get("needs_fallback_reply")
+                    and fallback_attempts < 2
+                    and (time.time() - last_fallback_ts) > 20.0
+                ):
+                    fallback_attempts += 1
+                    last_fallback_ts = time.time()
+                    progress_callback(
+                        pct,
+                        f"Muse từ chối ảnh frame đính kèm, đang tự động gửi lệnh phục hồi Clip ({fallback_attempts}/2)...",
+                    )
+                    try:
+                        comp_retry = await self._detect_composer(page)
+                        if comp_retry is not None:
+                            if fallback_attempts == 1:
+                                recovery_prompt = (
+                                    f"Yes, please generate this {aspect_ratio} video clip right now using your suggested calmer continuation take "
+                                    f"(or generate it directly as a text-only video without the attached image if the attached image cannot be animated), "
+                                    f"keeping the exact same characters/animals, environment, and {aspect_ratio} aspect ratio. "
+                                    f"Do not ask follow-up questions, invoke the video generation tool immediately."
+                                )
+                            else:
+                                recovery_prompt = (
+                                    f"Please generate this clip as a text-only video without the attached image right now with aspect ratio {aspect_ratio}, "
+                                    f"continuing the exact same scene, characters/animals, and natural lighting. "
+                                    f"Invoke the video generation tool directly without asking any questions."
+                                )
+                            await comp_retry.click()
+                            await comp_retry.fill(recovery_prompt)
+                            await asyncio.sleep(0.6)
+                            send_btn = page.locator("button[aria-label='Send']").first
+                            if await send_btn.count() > 0 and await send_btn.is_visible():
+                                await send_btn.click(timeout=3000)
+                            else:
+                                await page.keyboard.press("Enter")
+                            prompt_anchor = recovery_prompt[:45]
+                            await asyncio.sleep(3.0)
+                            continue
+                    except Exception:
+                        pass
 
                 # Kiểm tra nếu Muse báo lỗi không tạo được media
                 if elapsed >= 15 and not gen_status.get("is_generating"):
@@ -1188,9 +1239,20 @@ class PlaywrightEngine:
                         !!document.querySelector('button[aria-label*="Stop" i]')
                     );
                     let error_reason = null;
+                    let needs_fallback_reply = false;
                     if (!is_generating && promptNode) {
                         const lower = postPromptText.toLowerCase();
                         if (
+                            lower.includes("couldn't generate") ||
+                            lower.includes("can't generate this particular") ||
+                            lower.includes("can't generate that") ||
+                            lower.includes("happy to try a different take") ||
+                            lower.includes("a couple of ways we could still finish") ||
+                            lower.includes("as a text-only video without the attached image") ||
+                            lower.includes("want either of those")
+                        ) {
+                            needs_fallback_reply = true;
+                        } else if (
                             lower.includes("không khả dụng ở quốc gia") ||
                             lower.includes("không render được") ||
                             lower.includes("couldn't create that video") ||
@@ -1201,12 +1263,12 @@ class PlaywrightEngine:
                             error_reason = "Muse báo tính năng tạo Video bị giới hạn vùng (Region-block) trên tài khoản/IP hiện tại (Cần tài khoản & Proxy Mỹ/US để tạo Video)";
                         }
                     }
-                    return { is_generating, error_reason };
+                    return { is_generating, error_reason, needs_fallback_reply };
                 }""",
                 prompt_anchor,
             )
         except Exception:
-            return {"is_generating": False, "error_reason": None}
+            return {"is_generating": False, "error_reason": None, "needs_fallback_reply": False}
 
     async def _extract_new_dom_media_url(
         self,

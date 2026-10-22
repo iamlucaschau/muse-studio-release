@@ -131,6 +131,23 @@ def test_all():
         assert edit_res["ok"] is True
 
     # Kiểm tra Đồng bộ nhân vật (Character Consistency Lock) & Chuỗi Video Dài (Multi-Clip Chain)
+    from backend.matcher import filter_prompt_for_chain_clip
+
+    sample_30s = (
+        "[Cảnh 3/3 - 20s-30s] # ZEBRA MOTHER — Create a 30-second video — "
+        "### 0–3 SECONDS — IMMEDIATE DANGER — Hyena advances — "
+        "### 9–15 SECONDS — MAIN PROTECTIVE ACTION — Zebra kicks — "
+        "### 20–25 SECONDS — FOAL RETURNS TO SAFETY — Foal walks to mother — "
+        "### 25–30 SECONDS — SURVIVAL ENDING — Both walk away — "
+        "Negative Prompt : blood, gore, injuries, slow motion"
+    )
+    sliced_clip3 = filter_prompt_for_chain_clip(sample_30s, 3)
+    assert "20–25 SECONDS" in sliced_clip3
+    assert "25–30 SECONDS" in sliced_clip3
+    assert "0–3 SECONDS" not in sliced_clip3
+    assert "9–15 SECONDS" not in sliced_clip3
+    assert "blood" not in sliced_clip3.lower()
+
     chain_wrapped = wrap_prompt(
         "Nhân vật bước đi trong mưa neon",
         "img2vid",

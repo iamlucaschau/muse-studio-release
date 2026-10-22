@@ -121,6 +121,112 @@ def match_reference_images(
     return results
 
 
+def filter_prompt_for_chain_clip(
+    raw_prompt: str, chain_index: int, clip_duration: int = 10
+) -> str:
+    """
+    Khi người dùng nhập kịch bản dài (VD: 30s có chia mốc 0–3s, 3–6s, 6–9s, 9–15s, 15–20s, 20–25s, 25–30s),
+    hàm này tự động lọc để mỗi phân cảnh Clip #i (VD: Clip 3 = 20s–30s) CHỈ giữ lại đúng các mốc thời gian
+    thuộc khung [win_start, win_end] của Clip đó cùng phần mô tả bối cảnh/nhân vật chung.
+    Nhờ vậy Clip #3 (20s–30s) không bị lặp lại mệnh lệnh tấn công/va chạm của giây 0–15s gây xung đột với ảnh frame cuối của Clip #2.
+    Đồng thời loại bỏ các từ khóa nhạy cảm trong Negative Prompt (blood, gore, injuries) dễ làm bộ lọc Image-to-Video của Muse từ chối.
+    """
+    if not raw_prompt or chain_index <= 0:
+        return raw_prompt
+
+    win_start = (chain_index - 1) * clip_duration
+    win_end = chain_index * clip_duration
+
+    # Tách theo dấu phân cách đoạn ' — ' hoặc xuống dòng
+    parts = re.split(r"\s+—\s+|\r?\n", raw_prompt)
+    time_header_re = re.compile(
+        r"(?:^|\b)(?:#+\s*|\*\*\s*)?(?<!/)(\d{1,3})\s*(?:–|—|-|to)\s*(\d{1,3})\s*(?:seconds?|secs?)\b",
+        re.IGNORECASE,
+    )
+    major_section_re = re.compile(
+        r"^(?:#+\s*\d+\.|#+\s*[A-Z]|\*\*(?:CAMERA|PHYSICS|AUDIO|NATURAL|REALISTIC|FINAL|SCENE|ENVIRONMENT|NEGATIVE)|Negative\s+Prompt|\([A-Z][a-z]+\s+)",
+        re.IGNORECASE,
+    )
+    # Các mục tóm tắt toàn bộ 30s (chứa mệnh lệnh tấn công/đá hậu của giây 0-15s) cần lược bỏ ở Clip #2, #3+ để không xung đột với frame cuối
+    global_summary_section_re = re.compile(
+        r"^(?:#+\s*[78]\.\s*(?:CRITICAL\s+MOTION|FINAL\s+QUALITY)|\*\*FINAL\s+OBJECTIVE|\*\*Camera\s+geography)",
+        re.IGNORECASE,
+    )
+    resume_section_re = re.compile(
+        r"^(?:#+\s*[23456]\.|Negative\s+Prompt|\([A-Z][a-z]+\s+)",
+        re.IGNORECASE,
+    )
+
+    has_any_time_block = any(time_header_re.search(p) for p in parts)
+    filtered_parts: List[str] = []
+    in_time_block = False
+    keep_current_time_block = True
+    in_skipped_summary = False
+
+    if has_any_time_block:
+        for p in parts:
+            p_strip = p.strip()
+            if not p_strip:
+                continue
+
+            if chain_index >= 2 and global_summary_section_re.search(p_strip):
+                in_skipped_summary = True
+                in_time_block = False
+                continue
+
+            if in_skipped_summary:
+                if time_header_re.search(p_strip) or resume_section_re.search(p_strip):
+                    in_skipped_summary = False
+                else:
+                    continue
+
+            m_time = time_header_re.search(p_strip)
+            if m_time:
+                t0 = int(m_time.group(1))
+                t1 = int(m_time.group(2))
+                if t1 > t0 and t1 <= 180:
+                    in_time_block = True
+                    # Giữ lại mốc thời gian nếu giao nhau với cửa sổ [win_start, win_end] của Clip này
+                    keep_current_time_block = (t0 < win_end) and (t1 > win_start)
+                    if keep_current_time_block:
+                        filtered_parts.append(p_strip)
+                    continue
+
+            if in_time_block and major_section_re.search(p_strip):
+                in_time_block = False
+                keep_current_time_block = True
+
+            if not in_time_block or keep_current_time_block:
+                filtered_parts.append(p_strip)
+    else:
+        filtered_parts = [p.strip() for p in parts if p.strip()]
+
+    result = " — ".join(filtered_parts)
+
+    # Đổi 'Create a 30-second' thành 'Create a 10-second' để Muse không cố nhồi toàn bộ 30s vào 1 clip 10s
+    result = re.sub(
+        r"\bCreate\s+a\s+\d{2,3}-second\b",
+        f"Create a 10-second (segment {win_start}s-{win_end}s)",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"\bCOMPLETE\s+\d{2,3}-SECOND\s+ACTION\s+SEQUENCE\b",
+        f"ACTION SEQUENCE FOR SEGMENT {win_start}s–{win_end}s",
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    # Làm sạch các từ khóa nhạy cảm trong Negative Prompt dễ kích hoạt bộ lọc an toàn Image-to-Video của Muse
+    result = re.sub(
+        r"\b(?:animal\s+injuries|injuries|blood|gore|violent|violence)\s*,?\s*",
+        "",
+        result,
+        flags=re.IGNORECASE,
+    )
+    return result
+
+
 def wrap_prompt(
     raw_prompt: str,
     task_type: str,
@@ -140,6 +246,8 @@ def wrap_prompt(
     Kết hợp khóa Đồng bộ Nhân vật (Character Consistency Lock) & Chuỗi Video Dài (Multi-Clip Continuity).
     """
     prompt_clean = raw_prompt.strip()
+    if chain_group_id and chain_index > 0 and (task_type or "video").lower().strip() != "image":
+        prompt_clean = filter_prompt_for_chain_clip(prompt_clean, chain_index)
     ratio = aspect_ratio.strip() if aspect_ratio else "16:9"
     count = settings.get("default_image_count", "1") or "1"
     t_type = (task_type or "video").lower().strip()
