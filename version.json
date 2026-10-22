@@ -10,6 +10,8 @@
     "Bổ sung tính năng Thu hồi / Khóa License Key từ xa và quản lý Proxy"
   ],
   "revoked_keys": [
+    "25EBFDDCCF52B4763928",
+    "47E798A7D44C6127F314",
     "8E7831F1CDF27789AA67",
     "FD5EE5970079DFC626FA"
   ]

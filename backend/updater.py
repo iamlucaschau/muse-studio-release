@@ -46,10 +46,10 @@ def _parse_semver(ver_str: str) -> Tuple[int, ...]:
 
 def get_local_version_info() -> Dict[str, Any]:
     default_info = {
-        "version": "1.2.0",
-        "released_at": "21/10/2026",
-        "update_manifest_url": "",
-        "download_zip_url": "",
+        "version": "1.2.2",
+        "released_at": "22/10/2026",
+        "update_manifest_url": "https://github.com/iamlucaschau/muse-studio-release",
+        "download_zip_url": "https://raw.githubusercontent.com/iamlucaschau/muse-studio-release/master/dist_update/muse_update.zip",
         "changelog": [],
     }
     try:
@@ -60,8 +60,15 @@ def get_local_version_info() -> Dict[str, Any]:
     except Exception:
         pass
 
+    if not (default_info.get("update_manifest_url") or "").strip():
+        default_info["update_manifest_url"] = "https://github.com/iamlucaschau/muse-studio-release"
+
     settings = get_settings()
     custom_url = (settings.get("update_source_url") or "").strip()
+    # Tự động sửa nếu người dùng lỡ dán nhầm link ví dụ 'ten-cua-ban' hoặc 'ten-admin'
+    if custom_url and ("ten-cua-ban" in custom_url.lower() or "ten-admin" in custom_url.lower()):
+        custom_url = "https://github.com/iamlucaschau/muse-studio-release"
+        update_settings({"update_source_url": custom_url})
     if custom_url:
         default_info["update_manifest_url"] = custom_url
 
