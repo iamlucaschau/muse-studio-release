@@ -96,6 +96,30 @@
         </div>
     </header>
 
+    <!-- THANH THÔNG BÁO TỰ ĐỘNG KHI CÓ BẢN CẬP NHẬT MỚI (AUTO-UPDATE BANNER) -->
+    <div id="auto-update-banner" class="hidden bg-gradient-to-r from-emerald-900/90 via-teal-900/90 to-indigo-900/90 border-b border-emerald-500/50 px-4 py-2 flex items-center justify-between gap-3 shrink-0 z-20 shadow-lg">
+        <div class="flex items-center gap-2.5 text-xs text-emerald-100 min-w-0">
+            <span class="px-2 py-0.5 rounded-full bg-emerald-500 text-gray-950 font-extrabold text-[10px] uppercase tracking-wider shrink-0 animate-bounce">
+                Bản mới!
+            </span>
+            <span id="auto-update-banner-text" class="font-semibold truncate">
+                🎉 Đã có phiên bản mới! Bấm Cập Nhật Ngay để nâng cấp tính năng mới nhất (Giữ nguyên 100% Key, Tài khoản &amp; Video).
+            </span>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+            <button onclick="openUpdaterModal()" class="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-semibold transition">
+                Xem chi tiết
+            </button>
+            <button onclick="applyAppUpdateNow()" class="px-3.5 py-1 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-gray-950 text-xs font-extrabold shadow flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-bolt"></i>
+                <span>Cập Nhật Ngay</span>
+            </button>
+            <button onclick="dismissAutoUpdateBanner()" title="Ẩn thông báo này" class="w-6 h-6 rounded-lg hover:bg-white/10 text-emerald-200 hover:text-white flex items-center justify-center transition">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+    </div>
+
     <!-- ==================== MAIN CONTENT AREA ==================== -->
     <main class="flex-1 overflow-hidden relative">
 

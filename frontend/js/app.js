@@ -49,6 +49,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     await refreshStudioState();
     await loadSettingsIntoForm();
 
+    // Tự động kiểm tra bản cập nhật mới ngầm sau 3 giây khi mở app và định kỳ mỗi 10 phút
+    setTimeout(() => {
+        autoCheckAppUpdateInBackground();
+    }, 3000);
+    setInterval(() => {
+        autoCheckAppUpdateInBackground();
+    }, 600000);
+
     // Polling mỗi 1.5s để cập nhật thanh progress bar %, đồng hồ đếm giây và badge trạng thái
     setInterval(async () => {
         await refreshStudioState(true);
@@ -395,6 +403,69 @@ async function openUpdaterModal() {
     }
 }
 
+function showAutoUpdateBanner(remoteVer, changelogList) {
+    const banner = document.getElementById('auto-update-banner');
+    const bannerTxt = document.getElementById('auto-update-banner-text');
+    if (!banner) return;
+    if (state._dismissedUpdateVer === remoteVer) return;
+    const firstNote = (changelogList && changelogList.length > 0) ? ` — ${changelogList[0]}` : '';
+    if (bannerTxt) {
+        bannerTxt.textContent = `🎉 Đã có phiên bản mới v${remoteVer}${firstNote}! Bấm "Cập Nhật Ngay" để tự động nâng cấp trong 3 giây.`;
+    }
+    banner.classList.remove('hidden');
+}
+
+function dismissAutoUpdateBanner() {
+    const banner = document.getElementById('auto-update-banner');
+    if (banner) banner.classList.add('hidden');
+    if (state._latestRemoteVer) {
+        state._dismissedUpdateVer = state._latestRemoteVer;
+    }
+}
+
+async function autoCheckAppUpdateInBackground() {
+    try {
+        const res = await fetch('/api/updater/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_url: '' })
+        });
+        const data = await res.json();
+        if (!data || !data.ok) return;
+
+        // Đồng bộ lại trạng thái License ngay sau khi check update (để khóa ngay nếu Key vừa bị Admin thu hồi từ xa)
+        await refreshStudioState(true);
+
+        if (data.has_update && data.remote_version) {
+            state._latestRemoteVer = data.remote_version;
+            const hdrBtn = document.getElementById('btn-header-updater');
+            const hdrLbl = document.getElementById('label-header-updater');
+            const remoteVerEl = document.getElementById('upd-remote-ver');
+            const remoteDateEl = document.getElementById('upd-remote-date');
+
+            if (hdrBtn && hdrLbl) {
+                hdrBtn.className = 'px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-1.5 transition animate-pulse';
+                hdrLbl.textContent = `✨ Có bản mới v${data.remote_version}!`;
+            }
+            if (remoteVerEl) remoteVerEl.textContent = `v${data.remote_version}`;
+            if (remoteDateEl) remoteDateEl.textContent = data.remote_released_at || 'Mới nhất';
+            if (data.remote_changelog && data.remote_changelog.length > 0) {
+                renderChangelogItems(data.remote_changelog);
+            }
+
+            showAutoUpdateBanner(data.remote_version, data.remote_changelog || []);
+
+            if (state._notifiedUpdateVer !== data.remote_version) {
+                state._notifiedUpdateVer = data.remote_version;
+                showToast(`🎉 Đã có bản cập nhật mới v${data.remote_version}! Bấm "Cập Nhật Ngay" ở thanh thông báo phía trên để nâng cấp.`, 'success');
+                if (state.soundNotifyEnabled) {
+                    playCompletionChime();
+                }
+            }
+        }
+    } catch (e) {}
+}
+
 function closeUpdaterModal() {
     const modal = document.getElementById('modal-app-updater');
     if (modal) modal.classList.add('hidden');
@@ -437,6 +508,7 @@ async function checkAppUpdateNow() {
         }
 
         if (data.has_update) {
+            state._latestRemoteVer = data.remote_version;
             if (statusBox) {
                 statusBox.className = 'p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 font-semibold leading-relaxed';
                 statusBox.textContent = data.message;
@@ -445,6 +517,7 @@ async function checkAppUpdateNow() {
                 hdrBtn.className = 'px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-1.5 transition animate-pulse';
                 hdrLbl.textContent = `✨ Có bản mới v${data.remote_version}!`;
             }
+            showAutoUpdateBanner(data.remote_version, data.remote_changelog || []);
             showToast(`Đã phát hiện phiên bản mới v${data.remote_version}!`, 'success');
         } else {
             if (statusBox) {
