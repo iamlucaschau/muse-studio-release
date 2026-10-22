@@ -55,11 +55,14 @@ def test_all():
     assert [Path(p).name for p in byname_res[1]] == ["anh_so_2.jpg"]
     assert byname_res[2] == []
 
-    # 3. Kiểm tra hệ thống Bản quyền (License Key + HWID + Expiration)
+    # 3. Kiểm tra hệ thống Bản quyền (License Key + HWID + Expiration + Revocation)
     from backend.license_manager import (
         activate_license_key,
         generate_license_key,
         get_machine_hwid,
+        is_key_revoked,
+        revoke_license_key,
+        unrevoke_license_key,
         verify_license_key,
     )
 
@@ -77,6 +80,18 @@ def test_all():
     exp_res = verify_license_key(exp_key, current_hwid=my_hwid)
     assert exp_res["is_valid"] is False
     assert exp_res["status_code"] == "expired"
+
+    # Kiểm tra Thu hồi / Khóa Key (Revoke) và Mở khóa lại (Unrevoke)
+    temp_cust_key = generate_license_key(my_hwid, "2099-06-01", "Khách Test Thu Hồi", 30)
+    assert verify_license_key(temp_cust_key, current_hwid=my_hwid)["is_valid"] is True
+    revoke_license_key(temp_cust_key)
+    assert is_key_revoked(temp_cust_key) is True
+    rev_res = verify_license_key(temp_cust_key, current_hwid=my_hwid)
+    assert rev_res["is_valid"] is False
+    assert rev_res["status_code"] == "revoked"
+    unrevoke_license_key(temp_cust_key)
+    assert is_key_revoked(temp_cust_key) is False
+    assert verify_license_key(temp_cust_key, current_hwid=my_hwid)["is_valid"] is True
 
     # Kích hoạt Key Admin Vĩnh viễn cho máy hiện tại
     admin_key = generate_license_key(my_hwid, "2099-12-31", "Admin Master", 9999)

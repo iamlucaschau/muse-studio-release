@@ -20,12 +20,117 @@ from backend.database import BASE_DIR, DATA_DIR
 _MUSE_MASTER_SECRET = b"MuseStudio_Pro_2026_MasterSigningKey_#98A7F6E5D4C3B2A1_LuisEdition"
 LICENSE_FILE_PATH = DATA_DIR / "license.key"
 CLOCK_STATE_PATH = DATA_DIR / "clock_guard.dat"
+REVOKED_FILE_PATH = DATA_DIR / "revoked_keys.json"
+VERSION_MANIFEST_PATH = BASE_DIR / "version.json"
 
 VN_TZ = timezone(timedelta(hours=7))
 
-# Bộ nhớ đệm cho Mã máy (HWID) và Giờ chuẩn Quốc tế
+# Bộ nhớ đệm cho Mã máy (HWID), Giờ chuẩn Quốc tế và Danh sách Key bị thu hồi
 _CACHED_HWID: Optional[str] = None
 _CACHED_NET_TIME: Optional[Tuple[float, float]] = None  # (net_epoch, local_monotonic)
+_CACHED_REMOTE_REVOKED: Optional[Tuple[float, set]] = None  # (monotonic, set_of_sigs)
+
+
+def get_key_signature_id(key_str: str) -> str:
+    clean = (key_str or "").strip()
+    if "." in clean:
+        return clean.rsplit(".", 1)[-1].upper()
+    return hashlib.sha256(clean.encode("utf-8")).hexdigest()[:20].upper()
+
+
+def load_revoked_keys_set() -> set:
+    revoked = set()
+    # 1. Đọc từ .muse/revoked_keys.json
+    try:
+        if REVOKED_FILE_PATH.exists():
+            arr = json.loads(REVOKED_FILE_PATH.read_text(encoding="utf-8"))
+            if isinstance(arr, list):
+                revoked.update(str(x).strip().upper() for x in arr if x)
+    except Exception:
+        pass
+
+    # 2. Đọc từ version.json cục bộ
+    remote_manifest_url = ""
+    try:
+        if VERSION_MANIFEST_PATH.exists():
+            vdata = json.loads(VERSION_MANIFEST_PATH.read_text(encoding="utf-8"))
+            if isinstance(vdata, dict):
+                arr = vdata.get("revoked_keys") or []
+                if isinstance(arr, list):
+                    revoked.update(str(x).strip().upper() for x in arr if x)
+                remote_manifest_url = str(vdata.get("update_manifest_url") or "").strip()
+    except Exception:
+        pass
+
+    # 3. Kiểm tra danh sách thu hồi Online từ version.json trên GitHub/Server (Cache 5 phút)
+    global _CACHED_REMOTE_REVOKED
+    now_mono = time.monotonic()
+    if _CACHED_REMOTE_REVOKED is not None and (now_mono - _CACHED_REMOTE_REVOKED[0]) < 300:
+        revoked.update(_CACHED_REMOTE_REVOKED[1])
+    elif remote_manifest_url:
+        remote_set = set()
+        try:
+            url = remote_manifest_url.rstrip("/")
+            m = re.match(r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", url, re.IGNORECASE)
+            if m:
+                url = f"https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}/master/version.json"
+            req = urllib.request.Request(f"{url}?_t={int(time.time())}", headers={"User-Agent": "MuseStudio/1.2"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                rdata = json.loads(resp.read().decode("utf-8"))
+                if isinstance(rdata, dict) and isinstance(rdata.get("revoked_keys"), list):
+                    remote_set.update(str(x).strip().upper() for x in rdata["revoked_keys"] if x)
+        except Exception:
+            pass
+        _CACHED_REMOTE_REVOKED = (now_mono, remote_set)
+        revoked.update(remote_set)
+
+    return revoked
+
+
+def _save_revoked_keys_set(revoked_set: set) -> None:
+    sorted_list = sorted(x for x in revoked_set if x)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    REVOKED_FILE_PATH.write_text(
+        json.dumps(sorted_list, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    try:
+        vdata = {}
+        if VERSION_MANIFEST_PATH.exists():
+            vdata = json.loads(VERSION_MANIFEST_PATH.read_text(encoding="utf-8"))
+        if isinstance(vdata, dict):
+            vdata["revoked_keys"] = sorted_list
+            VERSION_MANIFEST_PATH.write_text(
+                json.dumps(vdata, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+    except Exception:
+        pass
+
+
+def revoke_license_key(key_str: str) -> None:
+    """Thu hồi (khóa) một License Key đã cấp."""
+    sig_id = get_key_signature_id(key_str)
+    if not sig_id:
+        return
+    revoked = load_revoked_keys_set()
+    revoked.add(sig_id)
+    _save_revoked_keys_set(revoked)
+
+
+def unrevoke_license_key(key_str: str) -> None:
+    """Mở khóa lại một License Key đã bị thu hồi."""
+    sig_id = get_key_signature_id(key_str)
+    if not sig_id:
+        return
+    revoked = load_revoked_keys_set()
+    revoked.discard(sig_id)
+    _save_revoked_keys_set(revoked)
+
+
+def is_key_revoked(key_str: str) -> bool:
+    sig_id = get_key_signature_id(key_str)
+    if not sig_id:
+        return False
+    return sig_id in load_revoked_keys_set()
 
 
 def _normalize_hwid_Input(raw_hwid: str) -> str:
@@ -263,6 +368,16 @@ def verify_license_key(key_str: str, current_hwid: Optional[str] = None) -> Dict
     customer = str(data.get("c", "Khách hàng")).strip()
     days_granted = int(data.get("d", 0) or 0)
     issued_ts = int(data.get("i", 0) or 0)
+
+    # 0. Kiểm tra xem Key này có nằm trong danh sách bị Admin thu hồi (Revoked) hay không
+    if is_key_revoked(clean_key):
+        base_res["status_code"] = "revoked"
+        base_res["customer"] = customer
+        base_res["message"] = (
+            f"🚫 License Key của [{customer}] đã bị Admin thu hồi / khóa quyền sử dụng! "
+            f"Vui lòng liên hệ Admin để được cấp lại."
+        )
+        return base_res
 
     # 1. Kiểm tra khóa cứng theo Mã máy (HWID)
     if key_hwid != machine_hwid:

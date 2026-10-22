@@ -170,6 +170,17 @@ def check_for_updates(custom_source_url: Optional[str] = None) -> Dict[str, Any]
     remote_rel = str(remote_data.get("released_at") or "").strip()
     remote_log = remote_data.get("changelog") or []
 
+    # Đồng bộ danh sách Key bị Admin thu hồi từ xa (nếu có trong version.json trên GitHub/Server)
+    remote_revoked = remote_data.get("revoked_keys")
+    if isinstance(remote_revoked, list) and remote_revoked:
+        try:
+            from backend.license_manager import revoke_license_key
+            for rk in remote_revoked:
+                if rk and str(rk).strip():
+                    revoke_license_key(str(rk).strip())
+        except Exception:
+            pass
+
     # Nếu repo GitHub chưa có dist_update/muse_update.zip thì có thể tải trực tiếp archive ZIP của repo
     m_gh = re.match(
         r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?$",

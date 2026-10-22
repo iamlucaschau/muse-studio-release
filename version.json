@@ -8,5 +8,6 @@
     "Bổ sung chọn nhanh Proxy từ Tab Proxy ngay tại bảng Tài khoản và hộp thoại Thêm tài khoản",
     "Chuyển sang cửa sổ phần mềm Desktop độc lập (1440x900) kèm hệ thống Bản quyền License Key theo HWID",
     "Tích hợp hệ thống Kiểm tra & Cập nhật tự động 1 chạm (OTA Auto-Update)"
-  ]
+  ],
+  "revoked_keys": []
 }

@@ -196,12 +196,15 @@ def run_gui():
             return
 
         manifest_url, zip_url = resolve_manifest_and_zip_urls(repo_url)
+        from backend.license_manager import load_revoked_keys_set
+
         new_manifest = {
             "version": ver,
             "released_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "update_manifest_url": repo_url,
             "download_zip_url": zip_url,
             "changelog": lines,
+            "revoked_keys": sorted(list(load_revoked_keys_set())),
         }
         VERSION_FILE.write_text(
             json.dumps(new_manifest, ensure_ascii=False, indent=2), encoding="utf-8"

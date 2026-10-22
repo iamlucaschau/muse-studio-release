@@ -10,6 +10,9 @@ from backend.license_manager import (
     activate_license_key,
     generate_license_key,
     get_machine_hwid,
+    is_key_revoked,
+    revoke_license_key,
+    unrevoke_license_key,
     verify_license_key,
 )
 
@@ -26,21 +29,26 @@ def load_key_history():
     return []
 
 
-def save_key_history(item):
-    history = load_key_history()
-    history.insert(0, item)
+def save_full_key_history(history_list):
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     HISTORY_FILE.write_text(
-        json.dumps(history[:200], ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(history_list[:200], ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def save_key_history(item):
+    history = load_key_history()
+    history = [x for x in history if x.get("key") != item.get("key")]
+    history.insert(0, item)
+    save_full_key_history(history)
 
 
 def run_gui():
     root = tk.Tk()
-    root.title("Muse Studio — Admin License Key Generator (Công cụ Cấp Key Bản Quyền)")
-    root.geometry("820x650")
+    root.title("Muse Studio — Admin License Key Generator (Cấp Key · Thu Hồi · Xóa Key)")
+    root.geometry("900x710")
     root.configure(bg="#0b0f19")
-    root.minsize(760, 600)
+    root.minsize(820, 640)
     ico_path = BASE_DIR / "muse_studio.ico"
     if ico_path.exists():
         try:
@@ -75,21 +83,21 @@ def run_gui():
     hdr.pack(fill="x")
     tk.Label(
         hdr,
-        text="🔑 MUSE STUDIO — CÔNG CỤ TẠO LICENSE KEY (DÀNH RIÊNG CHO ADMIN)",
+        text="🔑 MUSE STUDIO — CÔNG CỤ CẤP KEY, THU HỒI & XÓA LICENSE KEY (ADMIN)",
         bg="#111827",
         fg="#34d399",
         font=("Segoe UI", 12, "bold"),
     ).pack(anchor="w")
     tk.Label(
         hdr,
-        text="Khóa cứng theo Mã máy (HWID) + Kiểm soát Ngày hết hạn (Chữ ký số HMAC-SHA256 chống giả mạo)",
+        text="Khóa cứng theo Mã máy (HWID) + Kiểm soát Ngày hết hạn + Thu hồi/Xóa Key đã cấp",
         bg="#111827",
         fg="#9ca3af",
         font=("Segoe UI", 9),
     ).pack(anchor="w", pady=(2, 0))
 
     # Form chính
-    body = tk.Frame(root, bg="#0b0f19", padx=18, pady=12)
+    body = tk.Frame(root, bg="#0b0f19", padx=18, pady=10)
     body.pack(fill="both", expand=True)
 
     # Dòng 1: Mã máy HWID
@@ -199,7 +207,7 @@ def run_gui():
 
     # Các nút chọn nhanh thời hạn
     row_presets = tk.Frame(body, bg="#0b0f19")
-    row_presets.pack(fill="x", pady=(2, 12))
+    row_presets.pack(fill="x", pady=(2, 10))
     tk.Label(
         row_presets,
         text="Chọn nhanh thời hạn:",
@@ -346,10 +354,10 @@ def run_gui():
         cursor="hand2",
     ).pack(side="left")
 
-    # Ô hiển thị License Key vừa tạo
+    # Ô hiển thị License Key vừa tạo (hoặc dán Key bất kỳ để Thu hồi)
     tk.Label(
         body,
-        text="License Key vừa tạo (Đã tự động Copy vào Clipboard):",
+        text="License Key vừa tạo (hoặc dán mã Key bất kỳ vào đây để kiểm tra / Thu hồi):",
         bg="#0b0f19",
         fg="#9ca3af",
         font=("Segoe UI", 9),
@@ -365,19 +373,23 @@ def run_gui():
         relief="flat",
         bd=7,
     )
-    entry_key_out.pack(fill="x", pady=(3, 12))
+    entry_key_out.pack(fill="x", pady=(3, 10))
 
-    # Bảng lịch sử các Key đã cấp
+    # Thanh công cụ Quản lý / Thu hồi / Xóa Key đã cấp
+    hdr_table = tk.Frame(body, bg="#0b0f19")
+    hdr_table.pack(fill="x", pady=(0, 5))
+
     tk.Label(
-        body,
-        text="📜 Lịch sử các License Key đã cấp gần đây (Nhấp đúp vào dòng để Copy lại Key):",
+        hdr_table,
+        text="📜 Quản lý các License Key đã cấp (Chọn dòng bên dưới để Thu hồi, Mở khóa hoặc Xóa):",
         bg="#0b0f19",
         fg="#e5e7eb",
         font=("Segoe UI", 9, "bold"),
-    ).pack(anchor="w", pady=(0, 4))
+    ).pack(side="left")
 
-    cols = ("created_at", "customer", "hwid", "days", "expires_at", "key")
+    cols = ("status", "created_at", "customer", "hwid", "days", "expires_at", "key")
     tree = ttk.Treeview(body, columns=cols, show="headings", height=8)
+    tree.heading("status", text="Trạng thái")
     tree.heading("created_at", text="Ngày tạo")
     tree.heading("customer", text="Khách hàng")
     tree.heading("hwid", text="Mã máy (HWID)")
@@ -385,43 +397,190 @@ def run_gui():
     tree.heading("expires_at", text="Hết hạn")
     tree.heading("key", text="License Key")
 
-    tree.column("created_at", width=110, anchor="center")
-    tree.column("customer", width=140, anchor="w")
-    tree.column("hwid", width=155, anchor="center")
-    tree.column("days", width=65, anchor="center")
-    tree.column("expires_at", width=90, anchor="center")
-    tree.column("key", width=210, anchor="w")
+    tree.column("status", width=115, anchor="center")
+    tree.column("created_at", width=105, anchor="center")
+    tree.column("customer", width=130, anchor="w")
+    tree.column("hwid", width=145, anchor="center")
+    tree.column("days", width=60, anchor="center")
+    tree.column("expires_at", width=85, anchor="center")
+    tree.column("key", width=190, anchor="w")
     tree.pack(fill="both", expand=True)
 
     def refresh_history_table():
         for item in tree.get_children():
             tree.delete(item)
         for row in load_key_history():
+            k = row.get("key", "")
+            revoked = is_key_revoked(k)
+            st_label = "🚫 ĐÃ THU HỒI" if revoked else "🟢 Hoạt động"
             tree.insert(
                 "",
                 "end",
                 values=(
+                    st_label,
                     row.get("created_at", ""),
                     row.get("customer", ""),
                     row.get("hwid", ""),
                     row.get("days", ""),
                     row.get("expires_at", ""),
-                    row.get("key", ""),
+                    k,
                 ),
             )
 
-    def on_tree_double_click( _event):
+    def _get_selected_or_typed_key():
+        sel = tree.selection()
+        if sel:
+            vals = tree.item(sel[0], "values")
+            if vals and len(vals) >= 7:
+                return vals[6], vals[2], sel
+        typed = var_generated_key.get().strip()
+        if typed.startswith("MUSEKEY-"):
+            return typed, "Key nhập trực tiếp", ()
+        return "", "", ()
+
+    def do_revoke_selected_key():
+        target_key, cust_name, _ = _get_selected_or_typed_key()
+        if not target_key:
+            messagebox.showwarning(
+                "Chưa chọn Key",
+                "Vui lòng bấm chọn 1 dòng Key trong bảng lịch sử (hoặc dán mã MUSEKEY-... vào ô phía trên) để Thu hồi!",
+            )
+            return
+        if not messagebox.askyesno(
+            "Xác nhận Thu Hồi Key",
+            f"Bạn có chắc muốn THU HỒI (Khóa) License Key của [{cust_name}]?\n\n"
+            f"Sau khi thu hồi, Key này sẽ bị vô hiệu hóa ngay lập tức (kể cả khi chưa hết ngày sử dụng).",
+        ):
+            return
+        revoke_license_key(target_key)
+        refresh_history_table()
+        messagebox.showinfo(
+            "Đã Thu Hồi Key",
+            f"🚫 Đã thu hồi thành công License Key của [{cust_name}]!\n"
+            f"(Danh sách thu hồi cũng đã được lưu vào version.json để đồng bộ khóa từ xa khi bạn Publish Update).",
+        )
+
+    def do_unrevoke_selected_key():
+        target_key, cust_name, _ = _get_selected_or_typed_key()
+        if not target_key:
+            messagebox.showwarning("Chưa chọn Key", "Hãy chọn 1 dòng Key bị thu hồi trong bảng để mở khóa lại!")
+            return
+        unrevoke_license_key(target_key)
+        refresh_history_table()
+        messagebox.showinfo("Đã Mở Khóa Key", f"🟢 Đã khôi phục hoạt động cho License Key của [{cust_name}]!")
+
+    def do_delete_selected_key():
+        sel = tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn dòng", "Hãy bấm chọn ít nhất 1 dòng trong bảng lịch sử để xóa!")
+            return
+        vals = tree.item(sel[0], "values")
+        cust_name = vals[2] if len(vals) >= 3 else "Khách hàng"
+        target_key = vals[6] if len(vals) >= 7 else ""
+
+        ans = messagebox.askyesnocancel(
+            "Xóa & Thu hồi Key",
+            f"Bạn đang xóa Key của [{cust_name}] khỏi danh sách lịch sử.\n\n"
+            f"• Bấm [Yes] để VỪA THU HỒI (Khóa Key) VỪA XÓA khỏi danh sách.\n"
+            f"• Bấm [No] để chỉ xóa khỏi danh sách lịch sử (Key vẫn hoạt động).\n"
+            f"• Bấm [Cancel] để hủy.",
+        )
+        if ans is None:
+            return
+        if ans is True and target_key:
+            revoke_license_key(target_key)
+
+        selected_keys = set()
+        for item_id in sel:
+            v = tree.item(item_id, "values")
+            if v and len(v) >= 7:
+                selected_keys.add(v[6])
+
+        new_hist = [r for r in load_key_history() if r.get("key") not in selected_keys]
+        save_full_key_history(new_hist)
+        refresh_history_table()
+
+    def do_clear_all_history():
+        if not messagebox.askyesno(
+            "Xóa toàn bộ lịch sử",
+            "Bạn có chắc muốn xóa toàn bộ danh sách lịch sử Key đã hiển thị trong bảng không?",
+        ):
+            return
+        save_full_key_history([])
+        refresh_history_table()
+
+    # Hàng nút bấm Quản lý Lịch sử Key (Thu hồi / Mở khóa / Xóa dòng / Xóa hết)
+    row_manage = tk.Frame(body, bg="#0b0f19")
+    row_manage.pack(fill="x", pady=(8, 2))
+
+    tk.Button(
+        row_manage,
+        text="🚫 Thu Hồi / Khóa Key Đã Chọn",
+        command=do_revoke_selected_key,
+        bg="#dc2626",
+        fg="white",
+        activebackground="#ef4444",
+        font=("Segoe UI", 9, "bold"),
+        relief="flat",
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    ).pack(side="left", padx=(0, 8))
+
+    tk.Button(
+        row_manage,
+        text="🟢 Mở Khóa Lại Key (Unrevoke)",
+        command=do_unrevoke_selected_key,
+        bg="#059669",
+        fg="white",
+        activebackground="#10b981",
+        font=("Segoe UI", 9, "bold"),
+        relief="flat",
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    ).pack(side="left", padx=(0, 8))
+
+    tk.Button(
+        row_manage,
+        text="🗑️ Xóa Dòng Key Đã Chọn",
+        command=do_delete_selected_key,
+        bg="#334155",
+        fg="#fca5a5",
+        activebackground="#475569",
+        font=("Segoe UI", 9, "bold"),
+        relief="flat",
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    ).pack(side="left", padx=(0, 8))
+
+    tk.Button(
+        row_manage,
+        text="🧹 Xóa Toàn Bộ Lịch Sử",
+        command=do_clear_all_history,
+        bg="#1e293b",
+        fg="#9ca3af",
+        activebackground="#334155",
+        font=("Segoe UI", 9),
+        relief="flat",
+        padx=10,
+        pady=6,
+        cursor="hand2",
+    ).pack(side="right")
+
+    def on_tree_double_click(_event):
         sel = tree.selection()
         if not sel:
             return
         vals = tree.item(sel[0], "values")
-        if vals and len(vals) >= 6:
-            k = vals[5]
+        if vals and len(vals) >= 7:
+            k = vals[6]
             var_generated_key.set(k)
             root.clipboard_clear()
             root.clipboard_append(k)
             root.update()
-            messagebox.showinfo("Đã copy Key", f"Đã copy lại Key của [{vals[1]}] vào Clipboard!")
+            messagebox.showinfo("Đã copy Key", f"Đã copy lại Key của [{vals[2]}] vào Clipboard!")
 
     tree.bind("<Double-1>", on_tree_double_click)
     refresh_history_table()
@@ -435,7 +594,13 @@ def main():
     parser.add_argument("--expires", type=str, default="", help="Ngày hết hạn cụ thể YYYY-MM-DD")
     parser.add_argument("--customer", type=str, default="Khách hàng VIP", help="Tên khách hàng")
     parser.add_argument("--activate-local", action="store_true", help="Kích hoạt luôn vào máy hiện tại")
+    parser.add_argument("--revoke", type=str, default="", help="Thu hồi 1 mã MUSEKEY-...")
     args = parser.parse_args()
+
+    if args.revoke:
+        revoke_license_key(args.revoke)
+        print(f"Revoked key: {args.revoke}")
+        return
 
     if args.hwid or args.activate_local:
         target_hwid = args.hwid or get_machine_hwid()

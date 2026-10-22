@@ -1009,22 +1009,58 @@ class PlaywrightEngine:
                     post_upload_urls = await self._snapshot_existing_media_urls(page)
                     initial_media_urls.update(post_upload_urls)
 
-                # Điền prompt đã bọc mẫu vào Composer và bấm nút Send
+                # Điền prompt đã bọc mẫu vào Composer và bấm nút Send (Đảm bảo ảnh tham chiếu đã upload xong 100%)
                 progress_callback(25, "Đang gửi Prompt...")
                 new_comp = await self._detect_composer(page)
                 if new_comp is not None:
                     composer = new_comp
                 await composer.click()
                 await composer.fill(wrapped_prompt)
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.8)
 
-                send_btn = page.locator("button[aria-label='Send']").first
-                if await send_btn.count() > 0 and await send_btn.is_visible():
-                    await send_btn.click()
-                else:
-                    await page.keyboard.press("Enter")
+                # Nếu có đính kèm ảnh tham chiếu, chờ nút Send hết bị disabled (tối đa 15 giây cho ảnh upload xong)
+                for _ in range(25):
+                    try:
+                        send_ready = await page.evaluate(
+                            """() => {
+                                const btn = document.querySelector("button[aria-label='Send'], button[type='submit']");
+                                if (!btn) return true;
+                                return !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+                            }"""
+                        )
+                        if send_ready:
+                            break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.6)
 
-                prompt_anchor = raw_prompt.strip()[:65]
+                # Bấm Send và kiểm tra xác nhận ô Composer đã được gửi đi (trống)
+                for attempt_send in range(3):
+                    send_btn = page.locator("button[aria-label='Send']").first
+                    if await send_btn.count() > 0 and await send_btn.is_visible():
+                        try:
+                            await send_btn.click(timeout=3000)
+                        except Exception:
+                            await page.keyboard.press("Enter")
+                    else:
+                        await page.keyboard.press("Enter")
+
+                    await asyncio.sleep(1.5)
+                    try:
+                        rem_text = await composer.input_value()
+                    except Exception:
+                        try:
+                            rem_text = await composer.inner_text()
+                        except Exception:
+                            rem_text = ""
+                    if not (rem_text or "").strip():
+                        break
+                    await asyncio.sleep(1.0)
+
+                # Làm sạch ký tự Markdown (*, #, [, ]) khỏi prompt_anchor để khớp chính xác với DOM đã render của Muse.ai
+                clean_raw = re.sub(r"[*#_`~\[\]>]+", " ", raw_prompt)
+                clean_raw = re.sub(r"\s+", " ", clean_raw).strip()
+                prompt_anchor = clean_raw[:50]
 
                 # Chờ Muse khởi tạo URL /thread/<uuid> hoặc hiển thị bong bóng câu lệnh trước khi mở Tab kế tiếp
                 for _ in range(10):
@@ -1103,18 +1139,19 @@ class PlaywrightEngine:
         """
         try:
             return await page.evaluate(
-                """(promptSnippet) => {
-                    const cleanSnippet = (promptSnippet || '').trim();
+                r"""(promptSnippet) => {
+                    const normText = (s) => (s || '').replace(/[*#_`~\[\]>]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+                    const cleanSnippet = normText(promptSnippet).slice(0, 40);
                     let promptNode = null;
                     if (cleanSnippet.length >= 6) {
                         const candidates = Array.from(document.querySelectorAll('div, p, span'));
                         for (let i = candidates.length - 1; i >= 0; i--) {
                             const el = candidates[i];
                             if (el.closest('textarea, input, button, nav, aside, [aria-label*="Muse"]')) continue;
-                            const txt = (el.textContent || '').trim();
+                            const txt = normText(el.textContent);
                             if (txt.includes(cleanSnippet)) {
                                 const childHas = Array.from(el.children).some(
-                                    c => (c.textContent || '').includes(cleanSnippet)
+                                    c => normText(c.textContent).includes(cleanSnippet)
                                 );
                                 if (!childHas) {
                                     promptNode = el;
@@ -1186,21 +1223,22 @@ class PlaywrightEngine:
         """
         try:
             return await page.evaluate(
-                """({ ignoreList, taskType, promptSnippet }) => {
+                r"""({ ignoreList, taskType, promptSnippet }) => {
                     const ignoreSet = new Set(ignoreList || []);
 
                     // 1. Tìm bong bóng tin nhắn chứa câu lệnh promptSnippet của tác vụ hiện tại
+                    const normText = (s) => (s || '').replace(/[*#_`~\[\]>]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
                     let promptNode = null;
-                    const cleanSnippet = (promptSnippet || '').trim();
+                    const cleanSnippet = normText(promptSnippet).slice(0, 40);
                     if (cleanSnippet.length >= 6) {
                         const candidates = Array.from(document.querySelectorAll('div, p, span'));
                         for (let i = candidates.length - 1; i >= 0; i--) {
                             const el = candidates[i];
                             if (el.closest('textarea, input, button, nav, aside, [aria-label*="Muse"]')) continue;
-                            const txt = (el.textContent || '').trim();
+                            const txt = normText(el.textContent);
                             if (txt.includes(cleanSnippet)) {
                                 const childHas = Array.from(el.children).some(
-                                    c => (c.textContent || '').includes(cleanSnippet)
+                                    c => normText(c.textContent).includes(cleanSnippet)
                                 );
                                 if (!childHas) {
                                     promptNode = el;
@@ -1210,9 +1248,26 @@ class PlaywrightEngine:
                         }
                     }
 
-                    // Nếu chưa tìm thấy bong bóng tin nhắn của tác vụ này trong DOM thì tuyệt đối không lấy media cũ
-                    if (cleanSnippet.length >= 6 && !promptNode) {
-                        return null;
+                    // 2. Nếu chưa khớp theo text (do Muse rút gọn/format Markdown), tìm bong bóng câu lệnh cuối cùng bắt đầu bằng 'Create '
+                    if (!promptNode) {
+                        const candidates = Array.from(document.querySelectorAll('div, p, span'));
+                        for (let i = candidates.length - 1; i >= 0; i--) {
+                            const el = candidates[i];
+                            if (el.closest('textarea, input, button, nav, aside, [aria-label*="Muse"]')) continue;
+                            const rawT = (el.textContent || '').trim();
+                            if (rawT.startsWith('Create 1 image(s)') || rawT.startsWith('Create a video') || rawT.includes('CRITICAL CONTINUITY')) {
+                                const childHas = Array.from(el.children).some(
+                                    c => {
+                                        const ct = (c.textContent || '').trim();
+                                        return ct.startsWith('Create ') || ct.includes('CRITICAL CONTINUITY');
+                                    }
+                                );
+                                if (!childHas) {
+                                    promptNode = el;
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     // 2. Tìm xem có bong bóng câu lệnh nào khác nằm SAU promptNode không (nếu chung luồng chat)
@@ -1225,7 +1280,7 @@ class PlaywrightEngine:
                             const txt = (el.textContent || '').trim();
                             if (
                                 (txt.startsWith('Create 1 image(s)') || txt.startsWith('Create a video')) &&
-                                !txt.includes(cleanSnippet)
+                                (!cleanSnippet || !normText(txt).includes(cleanSnippet))
                             ) {
                                 const childHas = Array.from(el.children).some(
                                     c => (c.textContent || '').trim().startsWith('Create ')
@@ -1260,24 +1315,32 @@ class PlaywrightEngine:
                             if (
                                 v.hasAttribute('data-hatch-avatar-layer') ||
                                 v.hasAttribute('data-hatch-avatar-slot') ||
-                                v.closest('[aria-label*="Muse"]')
+                                v.closest('[aria-label*="Muse"]') ||
+                                v.closest('[data-hatch-avatar-slot]')
                             ) {
                                 continue;
                             }
                             if (!isValidPosition(v)) continue;
-                            if (v.videoWidth === 0 || v.videoHeight === 0) {
-                                try { v.preload = 'auto'; } catch (e) {}
-                                continue;
-                            }
+                            const candidateSrc = (v.src && (v.src.startsWith('http') || v.src.startsWith('blob:')))
+                                ? v.src
+                                : (v.querySelector('source')?.src || '');
+                            if (!candidateSrc || ignoreSet.has(candidateSrc)) continue;
+                            if (candidateSrc.includes('avatar') || candidateSrc.includes('/images/')) continue;
+
                             if (v.videoWidth === 480 && v.videoHeight === 480) continue;
-                            if (Math.max(v.videoWidth, v.videoHeight) < 500) continue;
-                            if (v.src && (v.src.startsWith('http') || v.src.startsWith('blob:')) && !ignoreSet.has(v.src)) {
-                                return v.src;
+                            if (v.videoWidth > 0 && Math.max(v.videoWidth, v.videoHeight) < 500) continue;
+
+                            if (v.videoWidth === 0 || v.videoHeight === 0) {
+                                try {
+                                    v.preload = 'auto';
+                                    v.scrollIntoView({ block: 'nearest' });
+                                    if (v.readyState === 0) v.load();
+                                } catch (e) {}
+                                const rect = v.getBoundingClientRect();
+                                // Nếu thẻ video kết quả đã hiển thị khung >= 180px và có URL mới thì trích xuất ngay
+                                if (rect.width < 180 && rect.height < 180) continue;
                             }
-                            const srcEl = v.querySelector('source');
-                            if (srcEl && srcEl.src && (srcEl.src.startsWith('http') || srcEl.src.startsWith('blob:')) && !ignoreSet.has(srcEl.src)) {
-                                return srcEl.src;
-                            }
+                            return candidateSrc;
                         }
                         return null;
                     } else {
