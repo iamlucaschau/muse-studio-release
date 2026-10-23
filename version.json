@@ -1,20 +1,20 @@
 {
-  "version": "1.2.3",
-  "released_at": "22/10/2026 23:05",
+  "version": "1.2.4",
+  "released_at": "23/10/2026 10:12",
   "update_manifest_url": "https://github.com/iamlucaschau/muse-studio-release",
   "download_zip_url": "https://raw.githubusercontent.com/iamlucaschau/muse-studio-release/master/dist_update/muse_update.zip",
   "changelog": [
-    "Nâng cấp bộ nhận diện Prompt thông minh (Smart Multi-line Prompt Parser): Tự động gộp kịch bản nhiều dòng (PROMPT 1, VIDEO SPECIFICATIONS, 0–2 SECONDS, Negative Prompt...) thành 1 Task thay vì tách lẻ từng dòng",
-    "Thêm tùy chọn chế độ tách Prompt (🧠 Tự động / 📄 Gộp tất cả 1 Task / 📑 Mỗi dòng 1 Task)",
-    "Khắc phục triệt để lỗi quá thời gian chờ ở Clip #3 khi tạo Chuỗi Video Dài 30s–60s",
-    "Tự động cắt lát kịch bản theo đúng mốc thời gian từng Clip 10s & tự động phục hồi (Auto-Recovery) khi Muse từ chối ảnh frame",
-    "Tích hợp khóa đồng bộ nhân vật (Character Consistency Lock) & tự ghép FFmpeg",
-    "Bổ sung tính năng Thu hồi / Khóa License Key từ xa và quản lý Proxy"
+    "Khắc phục triệt để lỗi nhảy Mã máy (HWID) khi khách bật/tắt VPN, WARP, đổi Wi-Fi hoặc dùng Random MAC Address",
+    "Tự động ghim cố định Mã thiết bị (DeviceAnchor) gắn với Windows MachineGuid & khôi phục Key cũ đã lưu",
+    "Thêm nút '🔓 Key Chống Đổi Mã Máy (Auto-Lock)' trong công cụ Run_KeyGen_Admin.bat cho khách đặc biệt",
+    "Nâng cấp bộ nhận diện Prompt thông minh (Smart Multi-line Prompt Parser): Tự động gộp kịch bản nhiều dòng thành 1 Task"
   ],
   "revoked_keys": [
     "25EBFDDCCF52B4763928",
     "47E798A7D44C6127F314",
     "4BDA8B14DA5335451087",
+    "816901625833E42178FA",
+    "8418C72786687E82CB64",
     "877C9DABCC23EBD0864B",
     "8E7831F1CDF27789AA67",
     "FD5EE5970079DFC626FA"
